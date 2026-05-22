@@ -1,38 +1,68 @@
-"""SQL tracer — produces fingerprints from SQL feature pipelines.
+"""SQL tracer entry point.
 
-**Not implemented in v0.0.1.** The full implementation lands in M2 atop
-sqlglot's dialect-aware AST.
+sqlglot is imported lazily inside :func:`trace_sql` so that
+``import mirrorml`` stays under the 200ms cold-start budget for users who
+never touch a SQL pipeline.
 
-Unlike the dataframe tracers, the SQL tracer does not need a runtime
-tracing harness — sqlglot parses the SQL text statically and produces an
-AST that maps cleanly onto our :class:`~mirrorml.fingerprint.schema.Operation`
-union.
+The M2 phase 1 surface accepts a single-table ``SELECT`` with optional
+``WHERE`` and a projection of bare column references. Anything else raises
+:class:`~mirrorml.exceptions.UnsupportedOperationError`. See
+:mod:`mirrorml.tracers._sql_walker` for the implementation and
+``docs/concepts/dtype_vocabulary.md`` for the canonical-dtype mapping that
+the SQL types are normalized into.
 """
 
 from __future__ import annotations
 
-from mirrorml.fingerprint.schema import Fingerprint
+from collections.abc import Mapping
+
+from mirrorml.fingerprint.schema import ColumnSpec, Fingerprint
 
 __all__ = ["trace_sql"]
 
 
-# EXPERIMENTAL: signature will be finalized in M2.
-def trace_sql(query: str, /, *, dialect: str | None = None) -> Fingerprint:
+def trace_sql(
+    query: str,
+    /,
+    *,
+    schemas: Mapping[str, tuple[ColumnSpec, ...]] | None = None,
+    dialect: str | None = None,
+) -> Fingerprint:
     """Trace a SQL feature pipeline; return its canonical fingerprint.
 
-    Not implemented in v0.0.1. The full implementation lands in M2.
-
     Args:
-        query: A SQL string. Will be parsed via sqlglot in the M2
-            implementation.
-        dialect: Optional sqlglot dialect name (``"snowflake"``,
-            ``"bigquery"``, etc.); ``None`` means dialect auto-detection.
+        query: A SQL string. Parsed via sqlglot.
+        schemas: Mapping from table name to the table's column list, e.g.
+            ``{"events": (("uid", "int64"), ("ts", "timestamp[ns, UTC]"))}``.
+            Required for every table referenced in ``FROM``. Dtypes must
+            be in the canonical vocabulary (see
+            ``docs/concepts/dtype_vocabulary.md``).
+        dialect: sqlglot dialect name (``"snowflake"``, ``"bigquery"``,
+            ``"postgres"``, ...) or ``None`` for auto-detection. The
+            dialect affects parsing only; the resulting fingerprint is
+            dialect-independent.
+
+    Returns:
+        A canonical :class:`~mirrorml.fingerprint.schema.Fingerprint`.
 
     Raises:
-        NotImplementedError: Always.
+        UnsupportedOperationError: For SQL constructs outside the M2
+            phase 1 surface, or when ``schemas`` does not cover a
+            table referenced in ``FROM``.
+
+    Examples:
+        >>> fp = trace_sql(
+        ...     "SELECT uid, score FROM events WHERE score > 0",
+        ...     schemas={"events": (("uid", "int64"), ("score", "float64"))},
+        ... )
+        >>> fp.framework
+        'sql'
+        >>> len(fp.operations)
+        3
+        >>> fp.output_schema
+        (('uid', 'int64'), ('score', 'float64'))
     """
 
-    raise NotImplementedError(
-        "trace_sql: not yet implemented in v0.0.1 (lands in M2). "
-        "Track progress in the project's issue tracker."
-    )
+    from mirrorml.tracers._sql_walker import trace_sql_impl
+
+    return trace_sql_impl(query, schemas=schemas, dialect=dialect)
