@@ -4,12 +4,15 @@ sqlglot is imported lazily inside :func:`trace_sql` so that
 ``import mirrorml`` stays under the 200ms cold-start budget for users who
 never touch a SQL pipeline.
 
-The M2 phase 1 surface accepts a single-table ``SELECT`` with optional
-``WHERE`` and a projection of bare column references. Anything else raises
-:class:`~mirrorml.exceptions.UnsupportedOperationError`. See
-:mod:`mirrorml.tracers._sql_walker` for the implementation and
-``docs/concepts/dtype_vocabulary.md`` for the canonical-dtype mapping that
-the SQL types are normalized into.
+The current surface accepts a single-table ``SELECT`` with optional
+``WHERE``, a projection of bare column references (with optional ``AS``
+aliasing), and optional ``ORDER BY``. JOINs, GROUP BY, HAVING, LIMIT,
+DISTINCT, UNION, subqueries, CTEs, and any expression in the projection
+or ORDER BY land in later M2 phases; everything outside the current
+surface raises :class:`~mirrorml.exceptions.UnsupportedOperationError`
+with an actionable message. See :mod:`mirrorml.tracers._sql_walker` for
+the implementation and ``docs/concepts/dtype_vocabulary.md`` for the
+canonical-dtype mapping that SQL types are normalized into.
 """
 
 from __future__ import annotations

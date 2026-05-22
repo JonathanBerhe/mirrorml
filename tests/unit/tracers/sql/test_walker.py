@@ -10,6 +10,7 @@ import pytest
 
 from mirrorml import trace_sql
 from mirrorml.exceptions import UnsupportedOperationError
+from mirrorml.fingerprint.operations import Sort
 
 EVENTS_SCHEMA = (
     ("uid", "int64"),
@@ -141,7 +142,6 @@ def test_unparseable_query_is_rejected() -> None:
     [
         ("SELECT a FROM t JOIN u ON t.x = u.x", "JOIN"),
         ("SELECT a FROM t GROUP BY a", "GROUP BY"),
-        ("SELECT a FROM t ORDER BY a", "ORDER BY"),
         ("SELECT a FROM t GROUP BY a HAVING a > 0", "GROUP BY"),
         ("SELECT a FROM t LIMIT 5", "LIMIT"),
         ("SELECT DISTINCT a FROM t", "DISTINCT"),
@@ -158,10 +158,13 @@ def test_out_of_scope_features_raise_with_actionable_message(query: str, marker:
         trace_sql(query, schemas=schemas)
 
 
-def test_projection_aliases_rejected() -> None:
-    with pytest.raises(UnsupportedOperationError, match="alias"):
+def test_alias_of_expression_rejected() -> None:
+    """Aliasing a bare column is supported; aliasing an expression (function
+    call, arithmetic) is not yet."""
+
+    with pytest.raises(UnsupportedOperationError, match="non-column"):
         trace_sql(
-            "SELECT uid AS user_id FROM events",
+            "SELECT uid + 1 AS bumped FROM events",
             schemas={"events": EVENTS_SCHEMA},
         )
 
@@ -180,6 +183,165 @@ def test_subquery_in_from_rejected() -> None:
             "SELECT * FROM (SELECT uid FROM events)",
             schemas={"events": EVENTS_SCHEMA},
         )
+
+
+# --- column aliasing ---------------------------------------------------------
+
+
+def test_alias_renames_column_in_output_schema() -> None:
+    fp = trace_sql(
+        "SELECT uid AS user_id FROM events",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert [op.kind for op in fp.operations] == ["source", "project"]
+    assert fp.output_schema == (("user_id", "int64"),)
+
+
+def test_alias_records_rename_in_project_schema_delta() -> None:
+    fp = trace_sql(
+        "SELECT uid AS user_id FROM events",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    project = fp.operations[1]
+    assert project.kind == "project"
+    assert project.columns == ("user_id",)
+    assert project.schema_delta.renamed == (("uid", "user_id"),)
+
+
+def test_unaliased_columns_do_not_appear_in_renamed() -> None:
+    fp = trace_sql(
+        "SELECT uid, score AS s FROM events",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    project = fp.operations[1]
+    assert project.schema_delta.renamed == (("score", "s"),)
+
+
+def test_alias_changes_fingerprint_id() -> None:
+    """A rename is a real semantic change; two pipelines that differ only by
+    an alias must produce different fingerprint_ids."""
+
+    fp_no_alias = trace_sql(
+        "SELECT uid FROM events",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    fp_with_alias = trace_sql(
+        "SELECT uid AS user_id FROM events",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert fp_no_alias.fingerprint_id != fp_with_alias.fingerprint_id
+
+
+# --- ORDER BY ----------------------------------------------------------------
+
+
+def test_order_by_emits_sort_as_last_op() -> None:
+    fp = trace_sql(
+        "SELECT uid, score FROM events ORDER BY score",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert [op.kind for op in fp.operations] == ["source", "project", "sort"]
+
+
+def test_order_by_default_direction_is_asc() -> None:
+    fp = trace_sql(
+        "SELECT uid, score FROM events ORDER BY score",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    sort = fp.operations[-1]
+    assert sort.kind == "sort"
+    assert sort.by == (("score", "asc"),)
+
+
+def test_order_by_desc_is_captured() -> None:
+    fp = trace_sql(
+        "SELECT uid, score FROM events ORDER BY score DESC",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    sort = fp.operations[-1]
+    assert isinstance(sort, Sort)
+    assert sort.by == (("score", "desc"),)
+
+
+def test_order_by_multiple_columns_preserves_order_and_direction() -> None:
+    fp = trace_sql(
+        "SELECT uid, score FROM events ORDER BY score DESC, uid ASC",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    sort = fp.operations[-1]
+    assert isinstance(sort, Sort)
+    assert sort.by == (("score", "desc"), ("uid", "asc"))
+
+
+def test_order_by_on_select_star() -> None:
+    """ORDER BY against a SELECT * pipeline references source columns."""
+
+    fp = trace_sql(
+        "SELECT * FROM events ORDER BY ts DESC",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert [op.kind for op in fp.operations] == ["source", "sort"]
+    sort = fp.operations[-1]
+    assert isinstance(sort, Sort)
+    assert sort.by == (("ts", "desc"),)
+
+
+def test_order_by_uses_output_alias_not_source_name() -> None:
+    fp = trace_sql(
+        "SELECT uid AS user_id FROM events ORDER BY user_id",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    sort = fp.operations[-1]
+    assert isinstance(sort, Sort)
+    assert sort.by == (("user_id", "asc"),)
+
+
+def test_order_by_references_unknown_column_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="bogus"):
+        trace_sql(
+            "SELECT uid FROM events ORDER BY bogus",
+            schemas={"events": EVENTS_SCHEMA},
+        )
+
+
+def test_order_by_expression_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="bare column"):
+        trace_sql(
+            "SELECT uid, score FROM events ORDER BY score * 2",
+            schemas={"events": EVENTS_SCHEMA},
+        )
+
+
+def test_order_by_direction_changes_fingerprint() -> None:
+    fp_asc = trace_sql(
+        "SELECT uid FROM events ORDER BY uid ASC",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    fp_desc = trace_sql(
+        "SELECT uid FROM events ORDER BY uid DESC",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert fp_asc.fingerprint_id != fp_desc.fingerprint_id
+
+
+# --- combined ---------------------------------------------------------------
+
+
+def test_alias_with_where_and_order_by() -> None:
+    fp = trace_sql(
+        "SELECT uid AS user_id, score FROM events WHERE score > 0 ORDER BY score DESC",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert [op.kind for op in fp.operations] == [
+        "source",
+        "filter",
+        "project",
+        "sort",
+    ]
+    assert fp.output_schema == (("user_id", "int64"), ("score", "float64"))
+    sort = fp.operations[-1]
+    assert isinstance(sort, Sort)
+    assert sort.by == (("score", "desc"),)
 
 
 # --- predicate capture -------------------------------------------------------

@@ -2,16 +2,18 @@
 :class:`~mirrorml.fingerprint.schema.Operation` instances and computes the
 input and output schemas.
 
-Phase 1 scope:
+Current scope:
 
 * Single-table ``SELECT``.
 * Optional ``WHERE``.
-* Projection: ``SELECT *`` or a list of bare column references.
+* Projection: ``SELECT *`` or a list of bare column references, with
+  optional ``AS`` aliasing.
+* Optional ``ORDER BY`` on output columns (``ASC`` / ``DESC``).
 
-Anything else (CTEs, JOINs, GROUP BY, ORDER BY, HAVING, LIMIT, DISTINCT,
-UNION, subqueries, aliases, expressions in the projection list) raises
+Anything else (CTEs, JOINs, GROUP BY, HAVING, LIMIT, DISTINCT, UNION,
+subqueries, expressions in the projection or ORDER BY) raises
 :class:`~mirrorml.exceptions.UnsupportedOperationError` with a message
-that names the unsupported feature and the offending SQL fragment.
+naming the unsupported feature and the offending SQL fragment.
 
 This module is internal. The public entry point is
 :func:`mirrorml.tracers.trace_sql`.
@@ -20,15 +22,15 @@ This module is internal. The public entry point is
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import cast
+from typing import Literal, cast
 
 import sqlglot
 import sqlglot.expressions as exp
 
 from mirrorml.exceptions import UnsupportedOperationError
 from mirrorml.fingerprint import build_fingerprint
-from mirrorml.fingerprint.operations import Filter, Project, Source
-from mirrorml.fingerprint.schema import ColumnSpec, Fingerprint, Operation
+from mirrorml.fingerprint.operations import Filter, Project, Sort, Source
+from mirrorml.fingerprint.schema import ColumnSpec, Fingerprint, Operation, SchemaDelta
 
 __all__ = ["trace_sql_impl"]
 
@@ -112,20 +114,33 @@ def _walk_select(
     if projection is None:
         output_schema = source_columns
     else:
-        for col_name in projection:
-            if col_name not in column_dtype:
+        for source_col, _ in projection:
+            if source_col not in column_dtype:
                 raise UnsupportedOperationError(
-                    f"SELECT references column {col_name!r}, which is not "
+                    f"SELECT references column {source_col!r}, which is not "
                     f"in the schema of table {source_table!r}. Available "
                     f"columns: {sorted(column_dtype)}"
                 )
+        renames = tuple((source, output) for source, output in projection if source != output)
         prj = Project(
             op_id="project",
             dependencies=(last_op_id,),
-            columns=projection,
+            columns=tuple(output for _, output in projection),
+            schema_delta=SchemaDelta(renamed=renames),
         )
         operations.append(prj)
-        output_schema = tuple((c, column_dtype[c]) for c in projection)
+        last_op_id = prj.op_id
+        output_schema = tuple((output, column_dtype[source]) for source, output in projection)
+
+    order = node.args.get("order")
+    if order is not None:
+        sort_by = _extract_order_by(order, output_schema)
+        srt = Sort(
+            op_id="sort",
+            dependencies=(last_op_id,),
+            by=sort_by,
+        )
+        operations.append(srt)
 
     return operations, source_columns, output_schema
 
@@ -145,8 +160,6 @@ def _reject_unsupported_toplevel(node: exp.Expression) -> None:
             raise UnsupportedOperationError("SQL JOINs are not supported in M2 phase 1")
         if node.args.get("group"):
             raise UnsupportedOperationError("SQL GROUP BY is not supported in M2 phase 1")
-        if node.args.get("order"):
-            raise UnsupportedOperationError("SQL ORDER BY is not supported in M2 phase 1")
         if node.args.get("having"):
             raise UnsupportedOperationError("SQL HAVING is not supported in M2 phase 1")
         if node.args.get("limit"):
@@ -171,8 +184,14 @@ def _extract_single_table(node: exp.Select) -> str:
     return target.name
 
 
-def _extract_projection(node: exp.Select) -> tuple[str, ...] | None:
-    """Return projected column names, or ``None`` for ``SELECT *``."""
+def _extract_projection(node: exp.Select) -> tuple[tuple[str, str], ...] | None:
+    """Return ``(source_column, output_name)`` pairs, or ``None`` for ``SELECT *``.
+
+    A bare column reference yields ``(name, name)``; ``col AS alias`` yields
+    ``(col, alias)``. Aliases on non-column expressions (function calls,
+    arithmetic) raise :class:`UnsupportedOperationError` until later M2
+    phases extend the surface.
+    """
 
     expressions = node.expressions
     if not expressions:
@@ -181,20 +200,64 @@ def _extract_projection(node: exp.Select) -> tuple[str, ...] | None:
     if len(expressions) == 1 and isinstance(expressions[0], exp.Star):
         return None
 
-    columns: list[str] = []
+    columns: list[tuple[str, str]] = []
     for expression in expressions:
         if isinstance(expression, exp.Column):
-            columns.append(expression.name)
+            columns.append((expression.name, expression.name))
         elif isinstance(expression, exp.Alias):
-            raise UnsupportedOperationError(
-                f"Column aliasing is deferred (got {expression.sql()!r}). "
-                f"Reference columns by their underlying name in M2 phase 1."
-            )
+            underlying = expression.this
+            if not isinstance(underlying, exp.Column):
+                raise UnsupportedOperationError(
+                    f"SELECT alias {expression.sql()!r} renames a non-column "
+                    f"expression. Expressions, function calls, and "
+                    f"aggregations are deferred to a later M2 phase."
+                )
+            columns.append((underlying.name, expression.alias))
         else:
             raise UnsupportedOperationError(
                 f"SELECT projection {expression.sql()!r} is not a bare "
                 f"column reference. Expressions, function calls, and "
-                f"aliases are deferred to a later M2 phase."
+                f"aggregations are deferred to a later M2 phase."
             )
 
     return tuple(columns)
+
+
+def _extract_order_by(
+    order: exp.Order, output_schema: tuple[ColumnSpec, ...]
+) -> tuple[tuple[str, Literal["asc", "desc"]], ...]:
+    """Build the ``Sort.by`` tuple from an ORDER BY clause.
+
+    ORDER BY references must be plain column names; expressions, function
+    calls, and positional references (``ORDER BY 1``) raise
+    :class:`UnsupportedOperationError`. The referenced column must appear
+    in the projection's output schema, matching SQL's scoping rules where
+    ORDER BY sees the post-projection names.
+    """
+
+    available = {name for name, _ in output_schema}
+
+    by: list[tuple[str, Literal["asc", "desc"]]] = []
+    for ordered in order.expressions:
+        if not isinstance(ordered, exp.Ordered):
+            raise UnsupportedOperationError(
+                f"ORDER BY item {ordered.sql()!r} is not a recognized "
+                f"ordered expression (sqlglot produced {type(ordered).__name__})"
+            )
+        underlying = ordered.this
+        if not isinstance(underlying, exp.Column):
+            raise UnsupportedOperationError(
+                f"ORDER BY {ordered.sql()!r} is not a bare column reference. "
+                f"Expressions, function calls, and positional ORDER BY are "
+                f"deferred to a later M2 phase."
+            )
+        col = underlying.name
+        if col not in available:
+            raise UnsupportedOperationError(
+                f"ORDER BY references column {col!r}, which is not in the "
+                f"output schema. Available: {sorted(available)}"
+            )
+        direction: Literal["asc", "desc"] = "desc" if ordered.args.get("desc") else "asc"
+        by.append((col, direction))
+
+    return tuple(by)
