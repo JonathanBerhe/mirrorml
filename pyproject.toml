@@ -1,0 +1,127 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mirrorml"
+version = "0.0.1"
+description = "Static detection of training-serving skew in ML feature pipelines."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "MirrorML contributors" }]
+keywords = [
+    "machine-learning",
+    "feature-pipelines",
+    "training-serving-skew",
+    "static-analysis",
+    "data-engineering",
+    "mlops",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.6",
+    "sqlglot>=23",
+    "libcst>=1.1",
+    "typer>=0.12",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+pandas = ["pandas>=2.0"]
+polars = ["polars>=0.20"]
+dev = [
+    "pytest>=8",
+    "pytest-benchmark>=4",
+    "hypothesis>=6",
+    "mypy>=1.10",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+mirrorml = "mirrorml.cli.app:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mirrorml"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/mirrorml",
+    "tests",
+    "docs",
+    "bench/README.md",
+    "LICENSE",
+    "README.md",
+    "pyproject.toml",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+extend-exclude = ["bench/pairs"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501", # line length — the formatter handles code; long doctest lines are fine
+    "B008", # function call in argument defaults — typer/Pydantic patterns use this
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B018"]  # property tests intentionally raise / assert dead expressions
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unreachable = true
+warn_redundant_casts = true
+warn_return_any = true
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_decorators = false
+
+[tool.pydantic-mypy]
+init_typed = true
+warn_required_dynamic_aliases = true
+warn_untyped_fields = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "--doctest-modules --strict-markers -ra"
+testpaths = ["src", "tests"]
+python_files = ["test_*.py"]
+markers = [
+    "golden: tests that compare against checked-in golden artifacts",
+    "property: hypothesis-based property tests",
+]
