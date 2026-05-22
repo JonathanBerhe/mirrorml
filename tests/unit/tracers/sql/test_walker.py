@@ -10,7 +10,7 @@ import pytest
 
 from mirrorml import trace_sql
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Sort
+from mirrorml.fingerprint.operations import Aggregate, Sort
 
 EVENTS_SCHEMA = (
     ("uid", "int64"),
@@ -141,8 +141,6 @@ def test_unparseable_query_is_rejected() -> None:
     "query,marker",
     [
         ("SELECT a FROM t JOIN u ON t.x = u.x", "JOIN"),
-        ("SELECT a FROM t GROUP BY a", "GROUP BY"),
-        ("SELECT a FROM t GROUP BY a HAVING a > 0", "GROUP BY"),
         ("SELECT a FROM t LIMIT 5", "LIMIT"),
         ("SELECT DISTINCT a FROM t", "DISTINCT"),
         ("WITH c AS (SELECT 1) SELECT * FROM c", "WITH"),
@@ -387,3 +385,203 @@ def test_equivalent_pipelines_produce_identical_fingerprint_ids() -> None:
         schemas=schemas,
     )
     assert fp_a.fingerprint_id == fp_b.fingerprint_id
+
+
+# --- GROUP BY + aggregations -------------------------------------------------
+
+
+def test_count_star_emits_aggregate_with_none_input() -> None:
+    fp = trace_sql(
+        "SELECT uid, COUNT(*) FROM events GROUP BY uid",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert [op.kind for op in fp.operations] == ["source", "aggregate"]
+    agg = fp.operations[1]
+    assert isinstance(agg, Aggregate)
+    assert agg.by == ("uid",)
+    assert agg.aggregations == (("count(*)", None, "count"),)
+    assert fp.output_schema == (("uid", "int64"), ("count(*)", "int64"))
+
+
+def test_count_column_emits_aggregate_with_input() -> None:
+    fp = trace_sql(
+        "SELECT uid, COUNT(score) FROM events GROUP BY uid",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    agg = fp.operations[1]
+    assert isinstance(agg, Aggregate)
+    assert agg.aggregations == (("count(score)", "score", "count"),)
+
+
+def test_count_distinct_maps_to_count_distinct_function() -> None:
+    fp = trace_sql(
+        "SELECT COUNT(DISTINCT uid) AS distinct_users FROM events",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    agg = fp.operations[1]
+    assert isinstance(agg, Aggregate)
+    assert agg.by == ()
+    assert agg.aggregations == (("distinct_users", "uid", "count_distinct"),)
+    assert fp.output_schema == (("distinct_users", "int64"),)
+
+
+@pytest.mark.parametrize(
+    "sql_fn,canonical",
+    [
+        ("SUM", "sum"),
+        ("AVG", "mean"),
+        ("MIN", "min"),
+        ("MAX", "max"),
+    ],
+)
+def test_canonical_aggregate_function_names(sql_fn: str, canonical: str) -> None:
+    fp = trace_sql(
+        f"SELECT uid, {sql_fn}(score) FROM events GROUP BY uid",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    agg = fp.operations[1]
+    assert isinstance(agg, Aggregate)
+    assert agg.aggregations[0][2] == canonical
+
+
+def test_sum_preserves_input_dtype() -> None:
+    fp = trace_sql(
+        "SELECT uid, SUM(score) AS total FROM events GROUP BY uid",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert fp.output_schema == (("uid", "int64"), ("total", "float64"))
+
+
+def test_avg_always_returns_float64() -> None:
+    fp = trace_sql(
+        "SELECT uid, AVG(uid) AS avg_uid FROM events GROUP BY uid",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert fp.output_schema == (("uid", "int64"), ("avg_uid", "float64"))
+
+
+def test_default_output_name_uses_canonical_function() -> None:
+    """No alias on AVG(score): the output column is "mean(score)", the
+    canonical-function-name form, not the SQL "AVG(score)" spelling."""
+
+    fp = trace_sql(
+        "SELECT uid, AVG(score) FROM events GROUP BY uid",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    names = [c for c, _ in fp.output_schema]
+    assert names == ["uid", "mean(score)"]
+
+
+def test_multi_key_group_by() -> None:
+    schemas = {
+        "events": (("uid", "int64"), ("country", "utf8"), ("score", "float64")),
+    }
+    fp = trace_sql(
+        "SELECT uid, country, SUM(score) AS total FROM events GROUP BY uid, country",
+        schemas=schemas,
+    )
+    agg = fp.operations[1]
+    assert isinstance(agg, Aggregate)
+    assert agg.by == ("uid", "country")
+    assert fp.output_schema == (
+        ("uid", "int64"),
+        ("country", "utf8"),
+        ("total", "float64"),
+    )
+
+
+def test_select_non_grouped_column_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="GROUP BY key"):
+        trace_sql(
+            "SELECT uid, score FROM events GROUP BY uid",
+            schemas={"events": EVENTS_SCHEMA},
+        )
+
+
+def test_unsupported_aggregate_function_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="supported"):
+        trace_sql(
+            "SELECT uid, STDDEV(score) FROM events GROUP BY uid",
+            schemas={"events": EVENTS_SCHEMA},
+        )
+
+
+def test_aggregate_of_expression_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="bare column"):
+        trace_sql(
+            "SELECT uid, SUM(score * 2) FROM events GROUP BY uid",
+            schemas={"events": EVENTS_SCHEMA},
+        )
+
+
+def test_select_star_with_group_by_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="SELECT \\*"):
+        trace_sql(
+            "SELECT * FROM events GROUP BY uid",
+            schemas={"events": EVENTS_SCHEMA},
+        )
+
+
+def test_aggregate_without_group_by() -> None:
+    """SELECT with aggregates but no GROUP BY aggregates over all rows
+    (single implicit group). Aggregate.by is the empty tuple."""
+
+    fp = trace_sql(
+        "SELECT COUNT(*) AS total FROM events",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    agg = fp.operations[1]
+    assert isinstance(agg, Aggregate)
+    assert agg.by == ()
+    assert fp.output_schema == (("total", "int64"),)
+
+
+# --- HAVING ------------------------------------------------------------------
+
+
+def test_having_emits_filter_after_aggregate() -> None:
+    fp = trace_sql(
+        "SELECT uid, COUNT(*) AS n FROM events GROUP BY uid HAVING COUNT(*) > 10",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert [op.kind for op in fp.operations] == [
+        "source",
+        "aggregate",
+        "filter",
+    ]
+
+
+def test_having_predicate_is_captured() -> None:
+    fp = trace_sql(
+        "SELECT uid, AVG(score) AS m FROM events GROUP BY uid HAVING AVG(score) > 0.5",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    flt = fp.operations[-1]
+    assert flt.kind == "filter"
+    assert isinstance(flt.predicate, str)
+    assert "AVG(score)" in flt.predicate or "avg" in flt.predicate.lower()
+
+
+def test_full_pipeline_where_groupby_having_orderby() -> None:
+    fp = trace_sql(
+        "SELECT uid, AVG(score) AS avg_score FROM events "
+        "WHERE score > 0 GROUP BY uid "
+        "HAVING AVG(score) > 0.5 ORDER BY avg_score DESC",
+        schemas={"events": EVENTS_SCHEMA},
+    )
+    assert [op.kind for op in fp.operations] == [
+        "source",
+        "filter",
+        "aggregate",
+        "filter",
+        "sort",
+    ]
+    assert fp.output_schema == (("uid", "int64"), ("avg_score", "float64"))
+
+
+def test_group_by_unknown_column_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="bogus"):
+        trace_sql(
+            "SELECT bogus, COUNT(*) FROM events GROUP BY bogus",
+            schemas={"events": EVENTS_SCHEMA},
+        )

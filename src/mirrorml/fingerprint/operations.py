@@ -55,16 +55,18 @@ class Project(_OpBase):
 class Aggregate(_OpBase):
     """Group-by aggregation.
 
-    ``aggregations`` is a tuple of ``(output_column, function)`` pairs.
-    Functions are either canonical reduction strings (``"mean"``, ``"sum"``,
-    ``"min"``, ``"max"``, ``"count"``, ``"std"``, ``"var"``, ``"median"``,
-    ``"first"``, ``"last"``) or :class:`UdfRef` for user-defined reductions.
-    Time-keyed aggregations populate ``temporal``.
+    ``aggregations`` is a tuple of ``(output_column, input_column, function)``
+    triples. ``input_column`` is ``None`` for row-counting aggregations like
+    SQL's ``COUNT(*)`` that do not target a specific column. The function is
+    one of the canonical reduction strings (``"count"``, ``"count_distinct"``,
+    ``"sum"``, ``"mean"``, ``"min"``, ``"max"``, ``"std"``, ``"var"``,
+    ``"median"``, ``"first"``, ``"last"``) or a :class:`UdfRef` for
+    user-defined reductions. Time-keyed aggregations populate ``temporal``.
     """
 
     kind: Literal["aggregate"] = "aggregate"
     by: tuple[ColumnName, ...]
-    aggregations: tuple[tuple[ColumnName, str | UdfRef], ...]
+    aggregations: tuple[tuple[ColumnName, ColumnName | None, str | UdfRef], ...]
     temporal: TemporalSemantics | None = None
 
 
@@ -113,7 +115,7 @@ class Window(_OpBase):
     over: tuple[ColumnName, ...]
     order_by: tuple[ColumnName, ...]
     size: str
-    aggregations: tuple[tuple[ColumnName, str | UdfRef], ...]
+    aggregations: tuple[tuple[ColumnName, ColumnName | None, str | UdfRef], ...]
     temporal: TemporalSemantics
 
 
