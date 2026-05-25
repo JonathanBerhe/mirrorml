@@ -140,11 +140,12 @@ def test_unparseable_query_is_rejected() -> None:
 @pytest.mark.parametrize(
     "query,marker",
     [
-        ("SELECT a FROM t JOIN u ON t.x = u.x", "JOIN"),
         ("SELECT a FROM t LIMIT 5", "LIMIT"),
         ("SELECT DISTINCT a FROM t", "DISTINCT"),
         ("WITH c AS (SELECT 1) SELECT * FROM c", "WITH"),
         ("SELECT a FROM t UNION SELECT a FROM u", "UNION"),
+        ("SELECT a FROM t CROSS JOIN u", "CROSS"),
+        ("SELECT a FROM t JOIN u USING (x)", "USING"),
     ],
 )
 def test_out_of_scope_features_raise_with_actionable_message(query: str, marker: str) -> None:

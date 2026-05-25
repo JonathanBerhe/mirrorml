@@ -4,12 +4,14 @@ sqlglot is imported lazily inside :func:`trace_sql` so that
 ``import mirrorml`` stays under the 200ms cold-start budget for users who
 never touch a SQL pipeline.
 
-The current surface accepts a single-table ``SELECT`` with optional
-``WHERE``, a projection that mixes bare column references (with optional
-``AS`` aliasing) and canonical aggregate function calls (``COUNT``,
-``SUM``, ``AVG``, ``MIN``, ``MAX``, ``COUNT(DISTINCT ...)``), optional
-``GROUP BY`` + ``HAVING``, and optional ``ORDER BY``. JOINs, LIMIT,
-DISTINCT, UNION, subqueries, CTEs, and any non-bare-column or
+The current surface accepts a ``SELECT`` over one or more tables joined
+by ``INNER`` / ``LEFT`` / ``RIGHT`` / ``FULL OUTER`` joins (with
+``ON`` clauses), optional ``WHERE``, a projection that mixes bare column
+references (with optional ``AS`` aliasing) and canonical aggregate
+function calls (``COUNT``, ``SUM``, ``AVG``, ``MIN``, ``MAX``,
+``COUNT(DISTINCT ...)``), optional ``GROUP BY`` + ``HAVING``, and
+optional ``ORDER BY``. ``LIMIT``, ``DISTINCT``, ``UNION``, ``CROSS JOIN``,
+``USING`` clauses, subqueries, CTEs, and any non-bare-column or
 non-canonical-aggregate expression land in later M2 phases; everything
 outside the current surface raises
 :class:`~mirrorml.exceptions.UnsupportedOperationError` with an

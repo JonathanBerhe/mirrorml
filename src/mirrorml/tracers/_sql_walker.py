@@ -4,7 +4,12 @@ input and output schemas.
 
 Current scope:
 
-* Single-table ``SELECT``.
+* ``SELECT`` over one or more tables joined by ``INNER`` / ``LEFT`` /
+  ``RIGHT`` / ``FULL OUTER`` joins. Joins use ``ON`` (USING is deferred)
+  and equality conjunctions only. Multi-way joins are supported via
+  chained binary Join ops; the resulting schema combines left + right
+  with ``_right`` suffix on column-name collisions.
+* Table aliases in ``FROM`` and ``JOIN`` (``FROM events AS e``).
 * Optional ``WHERE``.
 * Projection mixing bare column references (with optional ``AS`` aliasing)
   and canonical aggregate function calls (``COUNT``, ``SUM``, ``AVG``,
@@ -12,10 +17,11 @@ Current scope:
 * Optional ``GROUP BY`` plus ``HAVING``.
 * Optional ``ORDER BY`` on output columns (``ASC`` / ``DESC``).
 
-Anything else (CTEs, JOINs, LIMIT, DISTINCT row sets, UNION, subqueries,
-non-canonical aggregates, expressions inside aggregates or ORDER BY)
-raises :class:`~mirrorml.exceptions.UnsupportedOperationError` with a
-message naming the unsupported feature and the offending SQL fragment.
+Anything else (CTEs, ``CROSS JOIN``, ``USING``, LIMIT, DISTINCT row sets,
+UNION, subqueries, non-canonical aggregates, expressions inside
+aggregates or ORDER BY) raises
+:class:`~mirrorml.exceptions.UnsupportedOperationError` with a message
+naming the unsupported feature and the offending SQL fragment.
 
 This module is internal. The public entry point is
 :func:`mirrorml.tracers.trace_sql`.
@@ -31,7 +37,7 @@ import sqlglot.expressions as exp
 
 from mirrorml.exceptions import UnsupportedOperationError
 from mirrorml.fingerprint import build_fingerprint
-from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source
+from mirrorml.fingerprint.operations import Aggregate, Filter, Join, Project, Sort, Source
 from mirrorml.fingerprint.schema import ColumnSpec, Fingerprint, Operation, SchemaDelta
 
 # Map sqlglot's aggregate function classes to canonical reduction names.
@@ -98,25 +104,7 @@ def _walk_select(
             f"{type(node).__name__} in {node.sql()!r}"
         )
 
-    source_table = _extract_single_table(node)
-    if source_table not in schemas:
-        raise UnsupportedOperationError(
-            f"SQL FROM references table {source_table!r}, but no schema was "
-            f"provided. Pass schemas={{{source_table!r}: ((col, dtype), ...)}} "
-            f"to trace_sql so the Source operation can be built."
-        )
-
-    source_columns = schemas[source_table]
-    column_dtype = dict(source_columns)
-
-    operations: list[Operation] = []
-    source = Source(
-        op_id="source",
-        name=source_table,
-        columns=source_columns,
-    )
-    operations.append(source)
-    last_op_id = source.op_id
+    operations, column_dtype, source_columns, last_op_id = _build_from_chain(node, schemas)
 
     where = node.args.get("where")
     if where is not None:
@@ -154,14 +142,14 @@ def _walk_select(
     else:
         projection = _extract_projection(node)
         if projection is None:
-            output_schema = source_columns
+            output_schema = tuple(column_dtype.items())
         else:
             for source_col, _ in projection:
                 if source_col not in column_dtype:
                     raise UnsupportedOperationError(
                         f"SELECT references column {source_col!r}, which is not "
-                        f"in the schema of table {source_table!r}. Available "
-                        f"columns: {sorted(column_dtype)}"
+                        f"in the post-FROM schema. Available columns: "
+                        f"{sorted(column_dtype)}"
                     )
             renames = tuple((source, output) for source, output in projection if source != output)
             prj = Project(
@@ -198,28 +186,260 @@ def _reject_unsupported_toplevel(node: exp.Expression) -> None:
             raise UnsupportedOperationError(
                 "SQL CTEs (WITH clauses) are not supported in M2 phase 1"
             )
-        if node.args.get("joins"):
-            raise UnsupportedOperationError("SQL JOINs are not supported in M2 phase 1")
         if node.args.get("limit"):
             raise UnsupportedOperationError("SQL LIMIT is not supported in M2 phase 1")
         if node.args.get("distinct"):
             raise UnsupportedOperationError("SQL SELECT DISTINCT is not supported in M2 phase 1")
 
 
-def _extract_single_table(node: exp.Select) -> str:
+def _build_from_chain(
+    node: exp.Select, schemas: Mapping[str, tuple[ColumnSpec, ...]]
+) -> tuple[list[Operation], dict[str, str], tuple[ColumnSpec, ...], str]:
+    """Build the Source + (Join, Source)* chain from a Select's FROM and joins.
+
+    Returns:
+        operations: the new ops in the order they should appear.
+        current_schema: the post-chain column->dtype map (downstream ops use this).
+        left_source_columns: the left-most source table's column list (used as
+            the Fingerprint's input_schema; multi-source pipelines collapse to
+            the leftmost since the schema carries only one).
+        last_op_id: the id of the final op in the chain (Source if no joins,
+            otherwise the last Join).
+
+    Raises :class:`UnsupportedOperationError` for unknown tables, non-table
+    FROM targets, joins without ON, CROSS / USING joins, and ambiguous or
+    impossible-to-resolve ON keys.
+    """
+
     from_clause = node.args.get("from_") or node.args.get("from")
     if from_clause is None:
-        raise UnsupportedOperationError("SQL SELECT without FROM is not supported in M2 phase 1")
+        raise UnsupportedOperationError("SQL SELECT without FROM is not supported")
 
-    target = from_clause.this
-    if not isinstance(target, exp.Table):
+    left_target = from_clause.this
+    if not isinstance(left_target, exp.Table):
         raise UnsupportedOperationError(
-            f"FROM target must be a plain table reference in M2 phase 1; "
-            f"got {type(target).__name__} in {target.sql()!r}. Subqueries "
+            f"FROM target must be a plain table reference; got "
+            f"{type(left_target).__name__} in {left_target.sql()!r}. Subqueries "
             f"and table-valued functions are deferred."
         )
 
-    return target.name
+    left_name = left_target.name
+    left_alias = left_target.alias or left_name
+    if left_name not in schemas:
+        raise UnsupportedOperationError(
+            f"FROM references table {left_name!r}, but no schema was provided. "
+            f"Pass schemas={{{left_name!r}: ((col, dtype), ...)}} to trace_sql."
+        )
+    left_columns = schemas[left_name]
+
+    operations: list[Operation] = []
+    left_source = Source(op_id="source_0", name=left_name, columns=left_columns)
+    operations.append(left_source)
+    last_op_id = left_source.op_id
+
+    current_schema: dict[str, str] = dict(left_columns)
+    left_qualifiers: set[str] = {left_alias, left_name}
+
+    joins = node.args.get("joins") or []
+    for index, join_node in enumerate(joins):
+        right_target = join_node.this
+        if not isinstance(right_target, exp.Table):
+            raise UnsupportedOperationError(
+                f"JOIN target must be a plain table reference; got "
+                f"{type(right_target).__name__} in {right_target.sql()!r}. "
+                f"Subqueries are deferred."
+            )
+
+        right_name = right_target.name
+        right_alias = right_target.alias or right_name
+        if right_name not in schemas:
+            raise UnsupportedOperationError(
+                f"JOIN references table {right_name!r}, but no schema was provided. "
+                f"Pass it in schemas= to trace_sql."
+            )
+        right_columns = schemas[right_name]
+        right_dtype_map = dict(right_columns)
+
+        right_source = Source(op_id=f"source_{index + 1}", name=right_name, columns=right_columns)
+        operations.append(right_source)
+
+        how = _determine_join_kind(join_node)
+
+        on_expr = join_node.args.get("on")
+        if on_expr is None:
+            raise UnsupportedOperationError(
+                "JOIN without ON clause is not supported (use ON, not USING / CROSS)"
+            )
+
+        left_keys, right_keys = _resolve_on_keys(
+            on_expr=on_expr,
+            left_qualifiers=left_qualifiers,
+            right_qualifier=right_alias,
+            right_table_name=right_name,
+            left_schema=current_schema,
+            right_schema=right_dtype_map,
+        )
+
+        join_op = Join(
+            op_id=f"join_{index}",
+            dependencies=(last_op_id, right_source.op_id),
+            how=how,
+            left_keys=left_keys,
+            right_keys=right_keys,
+        )
+        operations.append(join_op)
+        last_op_id = join_op.op_id
+
+        current_schema = _combine_schemas_with_suffix(
+            current_schema, right_columns, suffix_right="_right"
+        )
+        left_qualifiers.add(right_alias)
+        left_qualifiers.add(right_name)
+
+    return operations, current_schema, left_columns, last_op_id
+
+
+def _determine_join_kind(
+    join_node: exp.Join,
+) -> Literal["inner", "left", "right", "outer"]:
+    """Map a sqlglot Join node to one of the canonical join kinds."""
+
+    if join_node.args.get("using"):
+        raise UnsupportedOperationError("JOIN ... USING (...) is not yet supported; rewrite as ON")
+
+    kind = join_node.args.get("kind")
+    side = join_node.args.get("side")
+
+    if kind == "CROSS":
+        raise UnsupportedOperationError("CROSS JOIN is not supported")
+
+    if side is None:
+        return "inner"
+    if side == "LEFT":
+        return "left"
+    if side == "RIGHT":
+        return "right"
+    if side == "FULL":
+        return "outer"
+
+    raise UnsupportedOperationError(f"unrecognized join: side={side!r}, kind={kind!r}")
+
+
+def _resolve_on_keys(
+    *,
+    on_expr: exp.Expression,
+    left_qualifiers: set[str],
+    right_qualifier: str,
+    right_table_name: str,
+    left_schema: Mapping[str, str],
+    right_schema: Mapping[str, str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Parse an ON predicate into ``(left_keys, right_keys)``.
+
+    The predicate must be a chain of equalities joined by ``AND``; each
+    equality must compare a column from the left side to a column from the
+    right side. Qualifier-based resolution uses the table name or alias;
+    unqualified columns are resolved by membership in the left vs right
+    schema, with ambiguous matches rejected.
+    """
+
+    right_qualifiers = {right_qualifier, right_table_name}
+
+    left_keys: list[str] = []
+    right_keys: list[str] = []
+
+    for eq in _flatten_and_chain(on_expr):
+        if not isinstance(eq, exp.EQ):
+            raise UnsupportedOperationError(
+                f"only equi-joins are supported; ON predicate {eq.sql()!r} is not an equality"
+            )
+        lhs = eq.this
+        rhs = eq.expression
+        if not isinstance(lhs, exp.Column) or not isinstance(rhs, exp.Column):
+            raise UnsupportedOperationError(
+                f"ON predicate {eq.sql()!r} must use plain column references on both sides"
+            )
+
+        lhs_side = _side_of(lhs, left_qualifiers, right_qualifiers, left_schema, right_schema)
+        rhs_side = _side_of(rhs, left_qualifiers, right_qualifiers, left_schema, right_schema)
+
+        if lhs_side == "left" and rhs_side == "right":
+            left_keys.append(lhs.name)
+            right_keys.append(rhs.name)
+        elif lhs_side == "right" and rhs_side == "left":
+            left_keys.append(rhs.name)
+            right_keys.append(lhs.name)
+        else:
+            raise UnsupportedOperationError(
+                f"ON predicate {eq.sql()!r} does not equate a left-side column "
+                f"with a right-side column"
+            )
+
+    return tuple(left_keys), tuple(right_keys)
+
+
+def _side_of(
+    col: exp.Column,
+    left_qualifiers: set[str],
+    right_qualifiers: set[str],
+    left_schema: Mapping[str, str],
+    right_schema: Mapping[str, str],
+) -> Literal["left", "right"]:
+    """Decide whether a column reference belongs to the left or right side."""
+
+    qualifier = col.table
+    if qualifier:
+        if qualifier in right_qualifiers:
+            return "right"
+        if qualifier in left_qualifiers:
+            return "left"
+        raise UnsupportedOperationError(
+            f"ON references qualifier {qualifier!r} that does not match the "
+            f"left side {sorted(left_qualifiers)} or the right side "
+            f"{sorted(right_qualifiers)}"
+        )
+
+    name = col.name
+    in_left = name in left_schema
+    in_right = name in right_schema
+    if in_left and not in_right:
+        return "left"
+    if in_right and not in_left:
+        return "right"
+    if in_left and in_right:
+        raise UnsupportedOperationError(
+            f"ON column {name!r} is ambiguous (exists on both sides). "
+            f"Qualify it with the table name or alias."
+        )
+    raise UnsupportedOperationError(f"ON column {name!r} does not exist on either side of the join")
+
+
+def _flatten_and_chain(expr: exp.Expression) -> list[exp.Expression]:
+    """Flatten a chain of AND expressions into the list of leaf conjuncts."""
+
+    if isinstance(expr, exp.And):
+        return _flatten_and_chain(expr.this) + _flatten_and_chain(expr.expression)
+    return [expr]
+
+
+def _combine_schemas_with_suffix(
+    left: Mapping[str, str], right: tuple[ColumnSpec, ...], *, suffix_right: str
+) -> dict[str, str]:
+    """Combine two schemas. Right-side columns colliding with anything
+    already in the combined schema get ``suffix_right`` appended repeatedly
+    until unique, so multi-way chains do not silently overwrite columns
+    from earlier joins.
+
+    Right is iterated in declaration order to keep the output deterministic.
+    """
+
+    combined: dict[str, str] = dict(left)
+    for col, dtype in right:
+        candidate = col
+        while candidate in combined:
+            candidate = f"{candidate}{suffix_right}"
+        combined[candidate] = dtype
+    return combined
 
 
 def _extract_projection(node: exp.Select) -> tuple[tuple[str, str], ...] | None:
