@@ -1,26 +1,43 @@
-"""Divergence classifier — map structural fingerprint differences to the
-closed taxonomy in ``docs/concepts/divergence_taxonomy.md``.
+"""Divergence classifier. Maps structural fingerprint differences to one
+of the fifteen closed taxonomy categories in
+``docs/concepts/divergence_taxonomy.md``.
 
-In v0.0.1 only the :class:`Divergence` data model is implemented; the
-classifier rules land in M3 together with the diff engine.
+This module is the home of all rule-style logic. The engine in
+:mod:`mirrorml.diff.engine` orchestrates the walk over two fingerprints
+and calls the helpers here for each interesting comparison. Keeping the
+rules separate lets the test suite exercise them in isolation and lets
+the engine stay focused on alignment.
+
+In M3 phase 1 the classifier covers seven categories that are reachable
+from SQL-only fingerprints: ``schema_drift``, ``type_coercion``,
+``timezone_mismatch``, ``rounding_precision``, ``aggregation_function``,
+``join_key_mismatch``, and ``ordering_dependence``. Window-boundary,
+as-of join direction, null handling, categorical encoding, seed,
+feature-leakage-temporal, and unit-mismatch land in later phases when
+the relevant ops are emitted by a tracer or when whole-graph reasoning
+is added.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from mirrorml._taxonomy import DivergenceCategory
-from mirrorml.fingerprint._typing import OpId
+from mirrorml.fingerprint._typing import ColumnName, OpId
+from mirrorml.fingerprint.dtypes import parse_dtype
+from mirrorml.fingerprint.schema import ColumnSpec, Operation
 
 
 class Divergence(BaseModel):
     """A single classified disagreement between two fingerprints.
 
-    ``category`` is drawn from the closed taxonomy of fifteen labels — see
-    ``docs/concepts/divergence_taxonomy.md``. ``left_op_id`` and
+    ``category`` is drawn from the closed taxonomy of fifteen labels (see
+    ``docs/concepts/divergence_taxonomy.md``). ``left_op_id`` and
     ``right_op_id`` locate the responsible operation on each side; either
-    may be ``None`` for divergences where the responsible op exists on only
-    one side (e.g. a missing operation, an extra filter).
+    may be ``None`` when the responsible op exists on only one side, or
+    when the divergence is schema-level rather than op-level.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -32,3 +49,346 @@ class Divergence(BaseModel):
         default="",
         description="Human-readable explanation suitable for CLI output.",
     )
+
+
+# --- dtype-level classification ----------------------------------------------
+
+
+def classify_dtype_difference(
+    column: ColumnName, left_dtype: str, right_dtype: str, *, location: str
+) -> Divergence:
+    """Classify the difference between two dtypes assigned to the same column.
+
+    The mapping is:
+
+    * Both ``timestamp`` with different timezones -> ``timezone_mismatch``.
+    * Same kind, different unit (``time`` / ``timestamp`` / ``duration``)
+      -> ``rounding_precision``.
+    * Both ``decimal`` with different precision or scale ->
+      ``rounding_precision``.
+    * Anything else -> ``type_coercion``.
+
+    ``location`` is a free-form label (``"input"``, ``"output"``, or
+    ``"op:<op_id>"``) that gets embedded in the diagnostic.
+    """
+
+    left = parse_dtype(left_dtype)
+    right = parse_dtype(right_dtype)
+
+    if (
+        left.kind == "timestamp"
+        and right.kind == "timestamp"
+        and left.timezone != right.timezone
+    ):
+        return Divergence(
+            category="timezone_mismatch",
+            detail=(
+                f"column {column!r} ({location}): timezone "
+                f"{left.timezone!r} vs {right.timezone!r} "
+                f"({left_dtype} vs {right_dtype})"
+            ),
+        )
+
+    if left.kind == right.kind and left.unit is not None and left.unit != right.unit:
+        return Divergence(
+            category="rounding_precision",
+            detail=(
+                f"column {column!r} ({location}): {left.kind} unit "
+                f"{left.unit!r} vs {right.unit!r} "
+                f"({left_dtype} vs {right_dtype})"
+            ),
+        )
+
+    if (
+        left.kind == "decimal"
+        and right.kind == "decimal"
+        and (left.precision, left.scale) != (right.precision, right.scale)
+    ):
+        return Divergence(
+            category="rounding_precision",
+            detail=(
+                f"column {column!r} ({location}): decimal precision/scale "
+                f"({left.precision}, {left.scale}) vs "
+                f"({right.precision}, {right.scale})"
+            ),
+        )
+
+    return Divergence(
+        category="type_coercion",
+        detail=(f"column {column!r} ({location}): dtype {left_dtype} vs {right_dtype}"),
+    )
+
+
+# --- schema-level comparison -------------------------------------------------
+
+
+def compare_schemas(
+    left: tuple[ColumnSpec, ...],
+    right: tuple[ColumnSpec, ...],
+    *,
+    location: str,
+) -> Iterator[Divergence]:
+    """Diff two column lists.
+
+    Columns present on only one side produce ``schema_drift`` divergences;
+    common columns with different dtypes are routed through
+    :func:`classify_dtype_difference`.
+
+    Order of the output: drops (left-only) first, then adds (right-only),
+    then per-common-column dtype divergences in left order. The ordering
+    is deterministic so diff output is reproducible.
+    """
+
+    left_dict = dict(left)
+    right_dict = dict(right)
+
+    for col, dtype in left:
+        if col not in right_dict:
+            yield Divergence(
+                category="schema_drift",
+                detail=(
+                    f"column {col!r} ({location}, dtype {dtype}) is present "
+                    f"on the left but not the right"
+                ),
+            )
+
+    for col, dtype in right:
+        if col not in left_dict:
+            yield Divergence(
+                category="schema_drift",
+                detail=(
+                    f"column {col!r} ({location}, dtype {dtype}) is present "
+                    f"on the right but not the left"
+                ),
+            )
+
+    for col, left_dtype in left:
+        right_dtype = right_dict.get(col)
+        if right_dtype is None or right_dtype == left_dtype:
+            continue
+        yield classify_dtype_difference(col, left_dtype, right_dtype, location=location)
+
+
+# --- op-pair classification --------------------------------------------------
+
+
+def classify_op_pair(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Yield divergences for two ops aligned at the same pipeline position.
+
+    Skips identical pairs. Dispatches on ``kind``; kinds without specific
+    rules emit a fallback ``schema_drift`` divergence so the disagreement
+    is at least surfaced (per CLAUDE.md: false negatives are worse than
+    false positives that the user can suppress).
+    """
+
+    if left == right:
+        return
+
+    if left.kind != right.kind:
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(f"op kinds differ at the same position: {left.kind!r} vs {right.kind!r}"),
+        )
+        return
+
+    kind = left.kind
+    if kind == "aggregate":
+        yield from _classify_aggregate(left, right)
+    elif kind == "join":
+        yield from _classify_join(left, right)
+    elif kind == "as_of_join":
+        yield from _classify_as_of_join(left, right)
+    elif kind == "sort":
+        yield from _classify_sort(left, right)
+    elif kind == "window":
+        yield from _classify_window(left, right)
+    elif kind == "source":
+        yield from _classify_source(left, right)
+    elif kind in ("project", "filter"):
+        # Differences here are visible at the schema level (output_schema)
+        # already, so the op-level diff would be redundant noise. Predicate
+        # changes on Filter do not map to a taxonomy category yet; that is
+        # a phase 2 concern.
+        return
+    else:
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"{kind!r} ops differ but classifier rule is not yet implemented",
+        )
+
+
+def _classify_source(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two Source ops. Column / dtype changes are surfaced via the
+    schema-level diff; the only op-local change worth flagging is the
+    table name (a different source table is a meaningful semantic change)."""
+
+    assert left.kind == "source" and right.kind == "source"
+    if left.name != right.name:
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"source table name: {left.name!r} vs {right.name!r}",
+        )
+
+
+def _classify_aggregate(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two Aggregate ops. Different group keys are
+    ``join_key_mismatch`` (the grouping is the equivalent concept).
+    Different functions on the same output column are
+    ``aggregation_function``."""
+
+    assert left.kind == "aggregate" and right.kind == "aggregate"
+    if left.by != right.by:
+        yield Divergence(
+            category="join_key_mismatch",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"GROUP BY keys differ: {left.by} vs {right.by}",
+        )
+
+    left_aggs = {output: (input_col, func) for output, input_col, func in left.aggregations}
+    right_aggs = {output: (input_col, func) for output, input_col, func in right.aggregations}
+
+    for output_col, (left_input, left_func) in left_aggs.items():
+        if output_col not in right_aggs:
+            yield Divergence(
+                category="schema_drift",
+                left_op_id=left.op_id,
+                right_op_id=right.op_id,
+                detail=f"aggregation {output_col!r} present on left but not right",
+            )
+            continue
+        right_input, right_func = right_aggs[output_col]
+        if left_func != right_func:
+            yield Divergence(
+                category="aggregation_function",
+                left_op_id=left.op_id,
+                right_op_id=right.op_id,
+                detail=(f"aggregation {output_col!r}: function {left_func!r} vs {right_func!r}"),
+            )
+        if left_input != right_input:
+            yield Divergence(
+                category="aggregation_function",
+                left_op_id=left.op_id,
+                right_op_id=right.op_id,
+                detail=(
+                    f"aggregation {output_col!r}: input column {left_input!r} vs {right_input!r}"
+                ),
+            )
+
+    for output_col in right_aggs:
+        if output_col not in left_aggs:
+            yield Divergence(
+                category="schema_drift",
+                left_op_id=left.op_id,
+                right_op_id=right.op_id,
+                detail=f"aggregation {output_col!r} present on right but not left",
+            )
+
+
+def _classify_join(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two Join ops."""
+
+    assert left.kind == "join" and right.kind == "join"
+    if left.how != right.how:
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"join kind differs: {left.how!r} vs {right.how!r}",
+        )
+    if left.left_keys != right.left_keys or left.right_keys != right.right_keys:
+        yield Divergence(
+            category="join_key_mismatch",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"join keys: ({left.left_keys}, {left.right_keys}) vs "
+                f"({right.left_keys}, {right.right_keys})"
+            ),
+        )
+
+
+def _classify_as_of_join(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two AsOfJoin ops. The temporal ``direction`` is the dominant
+    skew source for these joins (the canonical
+    ``as_of_join_direction`` category)."""
+
+    assert left.kind == "as_of_join" and right.kind == "as_of_join"
+    if left.temporal.direction != right.temporal.direction:
+        yield Divergence(
+            category="as_of_join_direction",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"as-of join direction: {left.temporal.direction!r} vs {right.temporal.direction!r}"
+            ),
+        )
+    if left.temporal.tolerance != right.temporal.tolerance:
+        yield Divergence(
+            category="as_of_join_direction",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"as-of join tolerance: {left.temporal.tolerance!r} vs {right.temporal.tolerance!r}"
+            ),
+        )
+    if left.left_keys != right.left_keys or left.right_keys != right.right_keys:
+        yield Divergence(
+            category="join_key_mismatch",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"as-of join keys: ({left.left_keys}, {left.right_keys}) vs "
+                f"({right.left_keys}, {right.right_keys})"
+            ),
+        )
+
+
+def _classify_sort(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two Sort ops. ``ordering_dependence`` covers ``by`` differences."""
+
+    assert left.kind == "sort" and right.kind == "sort"
+    if left.by != right.by:
+        yield Divergence(
+            category="ordering_dependence",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"sort by: {left.by} vs {right.by}",
+        )
+
+
+def _classify_window(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two Window ops. ``window_size_mismatch`` and
+    ``window_boundary`` are the two dominant skew sources."""
+
+    assert left.kind == "window" and right.kind == "window"
+    if left.size != right.size:
+        yield Divergence(
+            category="window_size_mismatch",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"window size: {left.size!r} vs {right.size!r}",
+        )
+    if left.temporal.closed != right.temporal.closed:
+        yield Divergence(
+            category="window_boundary",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"window boundary: closed={left.temporal.closed!r} vs "
+                f"closed={right.temporal.closed!r}"
+            ),
+        )
+    if left.over != right.over:
+        yield Divergence(
+            category="join_key_mismatch",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"window partition keys: {left.over} vs {right.over}",
+        )
