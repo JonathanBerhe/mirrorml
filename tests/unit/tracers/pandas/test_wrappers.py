@@ -61,9 +61,7 @@ def test_simple_greater_than_filter() -> None:
         (lambda s: s != 0, "score <> 0"),
     ],
 )
-def test_comparison_operators_render_in_sql_form(
-    op_fn: object, expected: str
-) -> None:
+def test_comparison_operators_render_in_sql_form(op_fn: object, expected: str) -> None:
     fp = trace_pandas(
         lambda df: df[op_fn(df["score"])],  # type: ignore[operator]
         input_schema=EVENTS,
