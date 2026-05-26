@@ -1,0 +1,24 @@
+name: timezone_mismatch_001
+bucket: synthetic
+category: timezone_mismatch
+description: Offline reads events.ts as timestamp[ns, UTC]; online reads as timestamp[ns,
+  Europe/London].
+expected_divergences:
+- category: timezone_mismatch
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - ts
+      - timestamp[ns, UTC]
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - ts
+      - timestamp[ns, Europe/London]
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

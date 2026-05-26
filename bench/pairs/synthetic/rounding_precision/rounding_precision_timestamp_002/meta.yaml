@@ -1,0 +1,23 @@
+name: rounding_precision_timestamp_002
+bucket: synthetic
+category: rounding_precision
+description: Offline timestamp resolution 's'; online resolution 'ms'.
+expected_divergences:
+- category: rounding_precision
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - ts
+      - timestamp[s, UTC]
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - ts
+      - timestamp[ms, UTC]
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

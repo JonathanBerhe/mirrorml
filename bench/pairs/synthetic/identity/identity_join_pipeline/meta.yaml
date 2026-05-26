@@ -1,0 +1,32 @@
+name: identity_join_pipeline
+bucket: synthetic
+category: identity
+description: Equivalent join; diff must be empty.
+expected_divergences: []
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    a:
+    - - uid
+      - int64
+    b:
+    - - uid
+      - int64
+    - - country
+      - utf8
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    a:
+    - - uid
+      - int64
+    b:
+    - - uid
+      - int64
+    - - country
+      - utf8
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

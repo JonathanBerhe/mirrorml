@@ -1,0 +1,26 @@
+name: identity_simple_select
+bucket: synthetic
+category: identity
+description: Same SQL on both sides; diff must be empty.
+expected_divergences: []
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

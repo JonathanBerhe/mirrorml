@@ -1,0 +1,23 @@
+name: rounding_precision_decimal_000
+bucket: synthetic
+category: rounding_precision
+description: Offline decimal(18, 2); online decimal(18, 4).
+expected_divergences:
+- category: rounding_precision
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    transactions:
+    - - amount
+      - decimal[18, 2]
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    transactions:
+    - - amount
+      - decimal[18, 4]
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

@@ -1,0 +1,23 @@
+name: type_coercion_001
+bucket: synthetic
+category: type_coercion
+description: Offline x dtype 'int32'; online x dtype 'int64'.
+expected_divergences:
+- category: type_coercion
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    t:
+    - - x
+      - int32
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    t:
+    - - x
+      - int64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

@@ -1,0 +1,27 @@
+name: ordering_dependence_asc_vs_desc
+bucket: synthetic
+category: ordering_dependence
+description: Same column, opposite directions.
+expected_divergences:
+- category: ordering_dependence
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

@@ -125,3 +125,9 @@ markers = [
     "golden: tests that compare against checked-in golden artifacts",
     "property: hypothesis-based property tests",
 ]
+
+[dependency-groups]
+dev = [
+    "pyyaml>=6.0.3",
+    "types-pyyaml>=6.0.12.20260518",
+]

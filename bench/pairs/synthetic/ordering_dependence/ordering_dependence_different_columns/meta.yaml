@@ -1,0 +1,27 @@
+name: ordering_dependence_different_columns
+bucket: synthetic
+category: ordering_dependence
+description: Offline orders by uid; online orders by score.
+expected_divergences:
+- category: ordering_dependence
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

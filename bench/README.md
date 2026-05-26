@@ -4,10 +4,23 @@ MirrorBench is the benchmark MirrorML is evaluated against. It is in-repo,
 checked in, and version-controlled with the library so any release can be
 re-evaluated against the same artifacts.
 
-This directory is currently scaffolding only. The benchmark pairs, the
-evaluation harness (`scripts/run_eval.py`), and the headline-metrics
-reporter all land in **milestone M4**. The structure below is documented
-now so contributors creating new pairs know where things go.
+**Phase 1 is live (M4 phase 1):** the synthetic bucket has 26 pairs covering
+the seven divergence categories the diff engine currently detects, the
+evaluator runs end-to-end, and the headline numbers are written to
+`bench/results/synthetic.json` (also checked in until CI takes over).
+
+```shell
+# Regenerate every synthetic pair from the deterministic generator.
+uv run python -m bench.scripts.generate_synthetic
+
+# Run the evaluator across every bucket and write JSON results.
+uv run python -m bench.scripts.run_eval
+# or, for the synthetic bucket only (CI-style):
+uv run python -m bench.scripts.run_eval --quick
+```
+
+The real-world and replayed-bug buckets are empty pending M4 phase 2
+(mining + reconstruction). The scaffolding for those is in place.
 
 ## Composition
 
@@ -48,19 +61,38 @@ pairs (e.g. `offline.py` + `online.sql`) test cross-framework equivalence
 — the most valuable kind for the headline claim. Fixtures must be small
 (< 1 MB) so the repo stays git-friendly; large fixtures move to Git LFS.
 
-## `meta.yaml` schema (sketch)
+## `meta.yaml` schema (M4 phase 1)
 
 ```yaml
-name: as_of_join_direction_basic
-bucket: synthetic              # synthetic | real_world | replayed_bugs
-category: as_of_join_direction # one of the 15 taxonomy labels
-expected_equivalent: false     # whether the pair should diff-clean
+name: timezone_mismatch_001        # unique within the bucket
+bucket: synthetic                  # synthetic | real_world | replayed_bugs
+category: timezone_mismatch        # one of the 15 taxonomy labels (or "identity")
 description: >
-  Forward vs. backward as-of join on the same keys.
-generator_seed: 42             # synthetic only
-source_url: ...                # real_world only
-postmortem_url: ...            # replayed_bugs only
+  Offline reads events with UTC timestamps; online reads with US/Pacific.
+expected_divergences:              # the categories the diff engine MUST emit
+  - category: timezone_mismatch
+offline:                           # the offline ("training") pipeline
+  language: sql                    # sql | pandas (pandas: M4 phase 2)
+  source: offline.sql              # filename relative to pair dir
+  schemas:                         # required for SQL pairs
+    events:
+      - [ts, "timestamp[ns, UTC]"]
+online:                            # the online ("serving") pipeline
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+      - [ts, "timestamp[ns, US/Pacific]"]
+generator:                         # synthetic only
+  module: bench.scripts.generate_synthetic
+  version: 1
+source_url: ...                    # real_world only (phase 2)
+postmortem_url: ...                # replayed_bugs only (phase 2)
 ```
+
+The `identity` category is a phase-1 marker for negative-control pairs
+where `expected_divergences` is empty. Identity pairs measure precision
+(a false-positive divergence on them counts against the headline number).
 
 ## Headline metrics
 
@@ -72,9 +104,9 @@ The harness produces, in priority order:
 4. **Localization top-1 accuracy** (target ≥ 0.75).
 5. **p95 fingerprint latency** for 20-op pipelines (target < 500 ms).
 
-Numbers are written to `bench/results/*.json` and are *not* checked in.
-Reruns regenerate them. The "Numbers to Cite" table in `PAPER.md` points
-back to these files.
+Numbers are written to `bench/results/*.json`. Phase 1 commits these
+results to the repo so the headline numbers are visible at every commit;
+once CI is wired up the results may move out of the tracked tree.
 
 ## Adding pairs
 

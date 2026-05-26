@@ -1,0 +1,27 @@
+name: schema_drift_rename
+bucket: synthetic
+category: schema_drift
+description: Offline keeps uid; online renames uid to user_id.
+expected_divergences:
+- category: schema_drift
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

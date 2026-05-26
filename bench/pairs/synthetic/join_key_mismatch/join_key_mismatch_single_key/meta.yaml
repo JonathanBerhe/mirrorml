@@ -1,0 +1,45 @@
+name: join_key_mismatch_single_key
+bucket: synthetic
+category: join_key_mismatch
+description: Offline joins on k1; online joins on k2.
+expected_divergences:
+- category: join_key_mismatch
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    a:
+    - - k1
+      - int64
+    - - k2
+      - int64
+    - - v
+      - float64
+    b:
+    - - k1
+      - int64
+    - - k2
+      - int64
+    - - v
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    a:
+    - - k1
+      - int64
+    - - k2
+      - int64
+    - - v
+      - float64
+    b:
+    - - k1
+      - int64
+    - - k2
+      - int64
+    - - v
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

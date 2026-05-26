@@ -1,0 +1,27 @@
+name: aggregation_function_001
+bucket: synthetic
+category: aggregation_function
+description: Offline aggregates score with SUM; online uses MAX.
+expected_divergences:
+- category: aggregation_function
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1
