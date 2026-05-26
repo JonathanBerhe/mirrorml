@@ -301,6 +301,7 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _ordering_dependence_pairs()
     yield from _cross_framework_identity_pairs()
     yield from _cross_framework_divergence_pairs()
+    yield from _cross_framework_polars_pairs()
     yield from _adversarial_predicate_pairs()
     yield from _adversarial_structure_pairs()
     yield from _adversarial_cosmetic_pairs()
@@ -352,11 +353,11 @@ def _write_side(target: Path, side: dict[str, Any], *, side_label: str) -> dict[
                 table: [list(col) for col in cols] for table, cols in side["schemas"].items()
             },
         }
-    if language == "pandas":
+    if language in ("pandas", "polars"):
         source = f"{side_label}.py"
         (target / source).write_text(side["python_source"])
         return {
-            "language": "pandas",
+            "language": language,
             "source": source,
             "function": side["function"],
             "input_schema": [list(col) for col in side["input_schema"]],
@@ -523,6 +524,110 @@ def _cross_framework_divergence_pairs() -> Iterable[dict[str, Any]]:
             "schemas": {"events": events_pt},
         },
         "expected_divergences": [{"category": "timezone_mismatch"}],
+    }
+
+
+def _cross_framework_polars_pairs() -> Iterable[dict[str, Any]]:
+    """Cross-framework pairs exercising the third tracer (Polars), both
+    against SQL and directly against pandas. Identity pairs MUST diff to
+    ``()`` (PAPER.md C4, extended to three frameworks); the sum-vs-avg
+    pair must still surface ``aggregation_function``."""
+
+    events = [("uid", "int64"), ("score", "float64")]
+    filter_project_src = (
+        "def offline(lf, pl):\n    return lf.filter(pl.col('score') > 0).select('uid', 'score')\n"
+    )
+    groupby_sum_src = (
+        "def offline(lf, pl):\n    return lf.group_by('uid').agg(pl.col('score').sum())\n"
+    )
+
+    yield {
+        "name": "cross_framework_identity_polars_filter_project",
+        "category": "identity",
+        "description": (
+            "polars lf.filter(pl.col('score') > 0).select('uid', 'score') vs "
+            "SQL SELECT uid, score FROM events WHERE score > 0."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": filter_project_src,
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid, score FROM events WHERE score > 0\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [],
+    }
+
+    yield {
+        "name": "cross_framework_identity_polars_groupby",
+        "category": "identity",
+        "description": (
+            "polars lf.group_by('uid').agg(pl.col('score').sum()) vs "
+            "SQL SELECT uid, SUM(score) AS score FROM events GROUP BY uid."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": groupby_sum_src,
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid, SUM(score) AS score FROM events GROUP BY uid\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [],
+    }
+
+    yield {
+        "name": "cross_framework_identity_polars_vs_pandas",
+        "category": "identity",
+        "description": (
+            "polars and pandas agree directly (no SQL in the loop): filter "
+            "then project must diff to ()."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": filter_project_src,
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "pandas",
+            "python_source": (
+                "def online(df):\n    return df[df['score'] > 0][['uid', 'score']]\n"
+            ),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [],
+    }
+
+    yield {
+        "name": "cross_framework_polars_sum_vs_sql_avg",
+        "category": "aggregation_function",
+        "description": "polars sums, SQL averages.",
+        "offline": {
+            "language": "polars",
+            "python_source": groupby_sum_src,
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid, AVG(score) AS score FROM events GROUP BY uid\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [{"category": "aggregation_function"}],
     }
 
 

@@ -1,0 +1,28 @@
+name: cross_framework_polars_sum_vs_sql_avg
+bucket: synthetic
+category: aggregation_function
+description: polars sums, SQL averages.
+expected_divergences:
+- category: aggregation_function
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

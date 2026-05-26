@@ -1,0 +1,28 @@
+name: cross_framework_identity_polars_groupby
+bucket: synthetic
+category: identity
+description: polars lf.group_by('uid').agg(pl.col('score').sum()) vs SQL SELECT uid,
+  SUM(score) AS score FROM events GROUP BY uid.
+expected_divergences: []
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

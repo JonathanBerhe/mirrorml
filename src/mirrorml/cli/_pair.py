@@ -23,16 +23,16 @@ contract, not a stable public surface.
     expected_divergences:
       - category: timezone_mismatch
     offline:
-      language: sql                    # sql | pandas
+      language: sql                    # sql | pandas | polars
       source: offline.sql              # filename relative to pair dir
       schemas:                         # required for SQL pairs
         events:
           - [ts, "timestamp[ns, UTC]"]
     online:
-      language: pandas
+      language: polars                 # pandas / polars trace a Python function
       source: online.py                # Python module relative to pair dir
       function: online                 # function name to look up + trace
-      input_schema:                    # required for pandas pairs
+      input_schema:                    # required for pandas / polars pairs
         - [ts, "timestamp[ns, US/Pacific]"]
       source_name: events              # optional; matches FROM table for cross-framework parity
     generator:                         # synthetic only
@@ -53,7 +53,7 @@ from typing import Any
 import yaml
 
 from mirrorml.fingerprint.schema import Fingerprint
-from mirrorml.tracers import trace_pandas, trace_sql
+from mirrorml.tracers import trace_pandas, trace_polars, trace_sql
 
 
 @dataclass(frozen=True)
@@ -140,7 +140,7 @@ def _trace_side(pair_dir: Path, side: dict[str, Any], *, side_label: str = "?") 
         dialect = side.get("dialect")
         return trace_sql(query, schemas=schemas, dialect=dialect)
 
-    if language == "pandas":
+    if language in ("pandas", "polars"):
         source_file = pair_dir / side["source"]
         if not source_file.is_file():
             raise ValueError(
@@ -151,16 +151,18 @@ def _trace_side(pair_dir: Path, side: dict[str, Any], *, side_label: str = "?") 
         raw_schema = side.get("input_schema")
         if not raw_schema:
             raise ValueError(
-                f"pair {pair_dir}: {side_label} (pandas) meta.yaml must declare an "
+                f"pair {pair_dir}: {side_label} ({language}) meta.yaml must declare an "
                 f"input_schema list"
             )
         input_schema = tuple(tuple(col) for col in raw_schema)
         source_name = side.get("source_name", "input")
-        return trace_pandas(function, input_schema=input_schema, source_name=source_name)
+        if language == "pandas":
+            return trace_pandas(function, input_schema=input_schema, source_name=source_name)
+        return trace_polars(function, input_schema=input_schema, source_name=source_name)
 
     raise ValueError(
         f"pair {pair_dir}: {side_label} has unknown language {language!r}; "
-        f"expected 'sql' or 'pandas'"
+        f"expected 'sql', 'pandas', or 'polars'"
     )
 
 

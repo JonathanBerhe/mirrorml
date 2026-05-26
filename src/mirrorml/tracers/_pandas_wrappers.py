@@ -1,7 +1,7 @@
 """Wrapper objects for the pandas tracer.
 
 The pandas tracer is a wrapper-object tracer: the user's pipeline runs
-against proxy ``_TraceFrame`` / ``_TraceSeries`` / ``_TracePredicate``
+against proxy ``_TraceFrame`` / ``_TraceSeries`` / ``TracePredicate``
 instances that intercept the standard pandas operations and record them
 as canonical :class:`~mirrorml.fingerprint.schema.Operation` instances.
 
@@ -30,6 +30,13 @@ from typing import Any
 from mirrorml.exceptions import UnsupportedOperationError
 from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Source
 from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta
+from mirrorml.tracers._trace_common import (
+    TracePredicate,
+    aggregation_output_dtype,
+    next_op_index,
+    render_literal,
+    resolve_agg_func,
+)
 
 # Maps pandas-side agg names to canonical reduction names. The SQL tracer
 # uses the same canonical names so an Aggregate emitted from either side
@@ -48,44 +55,11 @@ _CANONICAL_AGG: dict[str, str] = {
     "var": "var",
 }
 
-# Output dtype rules for aggregations. Mirrors _sql_walker._FIXED_DTYPE_FOR_FUNC
-# so cross-framework Aggregate ops produce identical output_schemas.
-_FIXED_DTYPE_FOR_FUNC: dict[str, str] = {
-    "count": "int64",
-    "count_distinct": "int64",
-    "mean": "float64",
-}
-
-
-class _TracePredicate:
-    """A captured boolean expression. Used as the key in ``df[mask]``.
-
-    Implements ``&``, ``|``, ``~`` to compose with SQL precedence so
-    ``(df.a > 0) & (df.b < 10)`` renders as ``"a > 0 AND b < 10"``.
-    """
-
-    __slots__ = ("_sql",)
-
-    def __init__(self, sql: str) -> None:
-        self._sql = sql
-
-    def render(self) -> str:
-        return self._sql
-
-    def __and__(self, other: _TracePredicate) -> _TracePredicate:
-        return _TracePredicate(f"{self._sql} AND {other._sql}")
-
-    def __or__(self, other: _TracePredicate) -> _TracePredicate:
-        return _TracePredicate(f"{self._sql} OR {other._sql}")
-
-    def __invert__(self) -> _TracePredicate:
-        return _TracePredicate(f"NOT ({self._sql})")
-
 
 class _TraceSeries:
     """A captured column reference. Comparison operators build predicates.
 
-    Returning a :class:`_TracePredicate` from ``__eq__`` / ``__ne__``
+    Returning a :class:`TracePredicate` from ``__eq__`` / ``__ne__``
     mirrors pandas's own broadcast-comparison semantics; the side effect
     is that ``_TraceSeries`` is not hashable (which is correct: a Series
     is not a dict key in real pandas either).
@@ -105,26 +79,26 @@ class _TraceSeries:
     def dtype(self) -> str:
         return self._dtype
 
-    def __gt__(self, other: object) -> _TracePredicate:
-        return _TracePredicate(f"{self._name} > {_render_literal(other)}")
+    def __gt__(self, other: object) -> TracePredicate:
+        return TracePredicate(f"{self._name} > {render_literal(other)}")
 
-    def __lt__(self, other: object) -> _TracePredicate:
-        return _TracePredicate(f"{self._name} < {_render_literal(other)}")
+    def __lt__(self, other: object) -> TracePredicate:
+        return TracePredicate(f"{self._name} < {render_literal(other)}")
 
-    def __ge__(self, other: object) -> _TracePredicate:
-        return _TracePredicate(f"{self._name} >= {_render_literal(other)}")
+    def __ge__(self, other: object) -> TracePredicate:
+        return TracePredicate(f"{self._name} >= {render_literal(other)}")
 
-    def __le__(self, other: object) -> _TracePredicate:
-        return _TracePredicate(f"{self._name} <= {_render_literal(other)}")
+    def __le__(self, other: object) -> TracePredicate:
+        return TracePredicate(f"{self._name} <= {render_literal(other)}")
 
     # __eq__ / __ne__ deliberately diverge from object identity so
     # comparison-style usage builds predicates. _TraceSeries is treated as
     # unhashable to keep this safe.
-    def __eq__(self, other: object) -> _TracePredicate:  # type: ignore[override]
-        return _TracePredicate(f"{self._name} = {_render_literal(other)}")
+    def __eq__(self, other: object) -> TracePredicate:  # type: ignore[override]
+        return TracePredicate(f"{self._name} = {render_literal(other)}")
 
-    def __ne__(self, other: object) -> _TracePredicate:  # type: ignore[override]
-        return _TracePredicate(f"{self._name} <> {_render_literal(other)}")
+    def __ne__(self, other: object) -> TracePredicate:  # type: ignore[override]
+        return TracePredicate(f"{self._name} <> {render_literal(other)}")
 
     __hash__ = None  # type: ignore[assignment]
 
@@ -160,7 +134,7 @@ class _TraceFrame:
         return dict(self._schema)
 
     def __getitem__(self, key: object) -> _TraceFrame | _TraceSeries:
-        if isinstance(key, _TracePredicate):
+        if isinstance(key, TracePredicate):
             return self._apply_filter(key)
         if isinstance(key, str):
             return self._select_column(key)
@@ -171,8 +145,8 @@ class _TraceFrame:
             f"Supported: boolean mask, column name (str), column list."
         )
 
-    def _apply_filter(self, predicate: _TracePredicate) -> _TraceFrame:
-        op_id = f"filter_{_next_op_index(self._operations)}"
+    def _apply_filter(self, predicate: TracePredicate) -> _TraceFrame:
+        op_id = f"filter_{next_op_index(self._operations)}"
         self._operations.append(
             Filter(
                 op_id=op_id,
@@ -205,7 +179,7 @@ class _TraceFrame:
                     f"pandas tracer: column {col!r} not in current frame. "
                     f"Available: {sorted(self._schema)}"
                 )
-        op_id = f"project_{_next_op_index(self._operations)}"
+        op_id = f"project_{next_op_index(self._operations)}"
         self._operations.append(
             Project(
                 op_id=op_id,
@@ -287,7 +261,7 @@ class _TraceFrame:
             if output_name != col:
                 renames.append((col, output_name))
 
-        op_id = f"project_{_next_op_index(self._operations)}"
+        op_id = f"project_{next_op_index(self._operations)}"
         self._operations.append(
             Project(
                 op_id=op_id,
@@ -393,7 +367,13 @@ class _TraceGroupBy:
                         f"{input_col!r}, which is not in the frame. "
                         f"Available: {sorted(self._frame._schema)}"
                     )
-                aggregations.append((output_col, input_col, _resolve_agg_func(func)))
+                aggregations.append(
+                    (
+                        output_col,
+                        input_col,
+                        resolve_agg_func(func, name_map=_CANONICAL_AGG, framework="pandas"),
+                    )
+                )
         elif isinstance(spec, str):
             if self._selection is None:
                 raise UnsupportedOperationError(
@@ -401,7 +381,7 @@ class _TraceGroupBy:
                     f"column selection. Use groupby(k)[col].agg(...) or "
                     f"groupby(k).agg({{col: {spec!r}}})."
                 )
-            canonical = _resolve_agg_func(spec)
+            canonical = resolve_agg_func(spec, name_map=_CANONICAL_AGG, framework="pandas")
             for col in self._selection:
                 aggregations.append((col, col, canonical))
         else:
@@ -432,7 +412,7 @@ class _TraceGroupBy:
         return self.agg("nunique")
 
     def _emit_aggregate(self, aggregations: list[tuple[str, str | None, str]]) -> _TraceFrame:
-        op_id = f"aggregate_{_next_op_index(self._frame._operations)}"
+        op_id = f"aggregate_{next_op_index(self._frame._operations)}"
         self._frame._operations.append(
             Aggregate(
                 op_id=op_id,
@@ -444,7 +424,7 @@ class _TraceGroupBy:
 
         output_schema: dict[str, str] = {key: self._frame._schema[key] for key in self._by}
         for output_col, input_col, func in aggregations:
-            output_schema[output_col] = _aggregation_output_dtype(
+            output_schema[output_col] = aggregation_output_dtype(
                 func, input_col, self._frame._schema
             )
 
@@ -453,41 +433,6 @@ class _TraceGroupBy:
             operations=self._frame._operations,
             last_op_id=op_id,
         )
-
-
-def _resolve_agg_func(func: object) -> str:
-    """Map a pandas-side agg-function value to the canonical reduction name."""
-
-    if callable(func) and not isinstance(func, str):
-        raise UnsupportedOperationError(
-            "pandas tracer: callable aggregations (UDFs) are not yet "
-            "supported; pass a canonical reduction name like 'sum'."
-        )
-    if not isinstance(func, str):
-        raise UnsupportedOperationError(
-            f"pandas tracer: agg function must be a canonical reduction "
-            f"name string; got {type(func).__name__}"
-        )
-    canonical = _CANONICAL_AGG.get(func)
-    if canonical is None:
-        raise UnsupportedOperationError(
-            f"pandas tracer: agg function {func!r} is not in the canonical "
-            f"reduction set ({sorted(_CANONICAL_AGG)})"
-        )
-    return canonical
-
-
-def _aggregation_output_dtype(
-    func: str, input_col: str | None, source_dtypes: dict[str, str]
-) -> str:
-    """Output dtype of an aggregation. Mirrors the SQL walker's rule."""
-
-    fixed = _FIXED_DTYPE_FOR_FUNC.get(func)
-    if fixed is not None:
-        return fixed
-    if input_col is None:
-        raise UnsupportedOperationError(f"pandas tracer: aggregation {func!r} has no input column")
-    return source_dtypes[input_col]
 
 
 def build_initial_frame(
@@ -511,34 +456,3 @@ def build_initial_frame(
         last_op_id=source.op_id,
     )
     return frame, operations
-
-
-def _next_op_index(operations: list[Operation]) -> int:
-    """Position-based op_id seed. Canonicalization rewrites these later,
-    so the specific seed does not affect fingerprint stability; uniqueness
-    within a fingerprint is what matters."""
-
-    return len(operations)
-
-
-def _render_literal(value: object) -> str:
-    """Render a Python literal as a SQL-like value.
-
-    Matches sqlglot's default rendering for the common cases so the
-    pandas ``Filter.predicate`` and the SQL ``Filter.predicate`` byte-
-    match for cross-framework equivalence.
-    """
-
-    if value is None:
-        return "NULL"
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, str):
-        escaped = value.replace("'", "''")
-        return f"'{escaped}'"
-    if isinstance(value, int | float):
-        return str(value)
-    raise UnsupportedOperationError(
-        f"pandas tracer: cannot render literal {value!r} ({type(value).__name__}) "
-        f"in a predicate; supported: int, float, str, bool, None."
-    )

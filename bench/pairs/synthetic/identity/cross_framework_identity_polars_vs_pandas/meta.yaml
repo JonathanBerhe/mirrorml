@@ -1,0 +1,29 @@
+name: cross_framework_identity_polars_vs_pandas
+bucket: synthetic
+category: identity
+description: 'polars and pandas agree directly (no SQL in the loop): filter then project
+  must diff to ().'
+expected_divergences: []
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: pandas
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1
