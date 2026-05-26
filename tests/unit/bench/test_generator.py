@@ -4,9 +4,10 @@ hand-authored; regenerating must produce identical output)."""
 
 from __future__ import annotations
 
+import filecmp
 from pathlib import Path
 
-from bench.scripts.generate_synthetic import regenerate
+from bench.scripts.generate_synthetic import SYNTHETIC_DIR, regenerate
 from bench.scripts.pair import load_pair
 
 
@@ -71,3 +72,38 @@ def test_every_generated_pair_loads_cleanly(tmp_path: Path) -> None:
         pair = load_pair(meta_path.parent)
         assert pair.offline.fingerprint_id
         assert pair.online.fingerprint_id
+
+
+def test_committed_synthetic_corpus_matches_fresh_regeneration(tmp_path: Path) -> None:
+    """The committed ``bench/pairs/synthetic/`` tree must be byte-identical
+    to what the current generator produces. If a contributor changes the
+    generator without rerunning it, this test catches the stale-corpus
+    drift before CI runs the evaluator on outdated pairs."""
+
+    fresh = tmp_path / "fresh"
+    regenerate(fresh)
+
+    committed = SYNTHETIC_DIR
+    assert committed.exists(), (
+        "bench/pairs/synthetic/ is missing; run `uv run python -m bench.scripts.generate_synthetic`"
+    )
+
+    fresh_files = {p.relative_to(fresh) for p in fresh.rglob("*") if p.is_file()}
+    committed_files = {p.relative_to(committed) for p in committed.rglob("*") if p.is_file()}
+
+    only_in_fresh = sorted(map(str, fresh_files - committed_files))
+    only_in_committed = sorted(map(str, committed_files - fresh_files))
+    assert not only_in_fresh and not only_in_committed, (
+        f"committed synthetic corpus is out of sync with the generator. "
+        f"only_in_fresh={only_in_fresh!r}, only_in_committed={only_in_committed!r}. "
+        f"Run `uv run python -m bench.scripts.generate_synthetic` and commit."
+    )
+
+    differing: list[str] = []
+    for rel in sorted(map(str, fresh_files)):
+        if not filecmp.cmp(fresh / rel, committed / rel, shallow=False):
+            differing.append(rel)
+    assert not differing, (
+        f"committed synthetic corpus differs from the generator output in: "
+        f"{differing!r}. Run `uv run python -m bench.scripts.generate_synthetic`."
+    )

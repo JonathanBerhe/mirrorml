@@ -186,6 +186,35 @@ def main(argv: list[str] | None = None) -> int:
         default=RESULTS_DIR,
         help="Directory to write per-bucket result JSON. Defaults to bench/results/.",
     )
+    parser.add_argument(
+        "--fail-under-precision",
+        type=float,
+        default=None,
+        metavar="P",
+        help=(
+            "Exit non-zero if any evaluated bucket's headline precision is "
+            "below P. CI uses this as a regression gate (CLAUDE.md target 0.95)."
+        ),
+    )
+    parser.add_argument(
+        "--fail-under-recall",
+        type=float,
+        default=None,
+        metavar="R",
+        help=(
+            "Exit non-zero if any evaluated bucket's headline recall is "
+            "below R. CI uses this as a regression gate (CLAUDE.md target 0.80)."
+        ),
+    )
+    parser.add_argument(
+        "--github-step-summary",
+        type=Path,
+        default=None,
+        help=(
+            "Append a markdown table of headline numbers to this file. "
+            "Intended for $GITHUB_STEP_SUMMARY in GitHub Actions."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.quick and args.bucket:
@@ -202,6 +231,8 @@ def main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
 
     overall_failed = False
+    failures: list[str] = []
+    bucket_summaries: list[tuple[str, dict[str, Any]]] = []
     for bucket in buckets:
         _, summary = evaluate_bucket(bucket)
         out_path = args.out / f"{bucket}.json"
@@ -216,12 +247,76 @@ def main(argv: list[str] | None = None) -> int:
             f"f1={head['f1']:.3f} "
             f"-> {out_path.relative_to(REPO_ROOT)}"
         )
+        bucket_summaries.append((bucket, summary))
+
         if head["pairs"] == 0 and bucket == "synthetic":
-            # synthetic should always have generated pairs; empty means
-            # the generator was not run.
+            # Synthetic should always have generated pairs; empty means
+            # the generator was not run before the evaluator.
+            failures.append(
+                f"[{bucket}] no pairs found; run "
+                f"`uv run python -m bench.scripts.generate_synthetic`"
+            )
+            overall_failed = True
+            continue
+
+        if (
+            args.fail_under_precision is not None
+            and head["pairs"] > 0
+            and head["precision"] < args.fail_under_precision
+        ):
+            failures.append(
+                f"[{bucket}] precision {head['precision']:.3f} < "
+                f"threshold {args.fail_under_precision:.3f}"
+            )
             overall_failed = True
 
+        if (
+            args.fail_under_recall is not None
+            and head["pairs"] > 0
+            and head["recall"] < args.fail_under_recall
+        ):
+            failures.append(
+                f"[{bucket}] recall {head['recall']:.3f} < threshold {args.fail_under_recall:.3f}"
+            )
+            overall_failed = True
+
+    if args.github_step_summary is not None:
+        _write_step_summary(args.github_step_summary, bucket_summaries, failures)
+
+    for message in failures:
+        print(f"FAIL: {message}", file=sys.stderr)
+
     return 1 if overall_failed else 0
+
+
+def _write_step_summary(
+    path: Path,
+    summaries: list[tuple[str, dict[str, Any]]],
+    failures: list[str],
+) -> None:
+    """Append a GitHub Actions step summary describing the run."""
+
+    lines: list[str] = []
+    lines.append("## MirrorBench")
+    lines.append("")
+    lines.append("| Bucket | Pairs | Precision | Recall | F1 |")
+    lines.append("|---|---:|---:|---:|---:|")
+    for bucket, summary in summaries:
+        head = summary["headline"]
+        lines.append(
+            f"| `{bucket}` | {head['pairs']} | "
+            f"{head['precision']:.3f} | {head['recall']:.3f} | "
+            f"{head['f1']:.3f} |"
+        )
+    if failures:
+        lines.append("")
+        lines.append("### Failures")
+        lines.append("")
+        for message in failures:
+            lines.append(f"- {message}")
+    lines.append("")
+    with path.open("a") as f:
+        f.write("\n".join(lines))
 
 
 if __name__ == "__main__":  # pragma: no cover

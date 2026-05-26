@@ -1,8 +1,12 @@
-"""Tests for the evaluator's metric aggregation."""
+"""Tests for the evaluator's metric aggregation + CLI threshold flags."""
 
 from __future__ import annotations
 
-from bench.scripts.run_eval import PairResult, aggregate
+import json
+from pathlib import Path
+
+import yaml
+from bench.scripts.run_eval import PairResult, aggregate, main
 
 
 def _result(
@@ -141,3 +145,171 @@ def test_per_category_metrics_aggregate_within_category() -> None:
 
 
 import pytest  # noqa: E402  (kept at bottom so the helper above stays minimal)
+
+# --- CLI threshold flags ----------------------------------------------------
+
+
+def _write_minimal_pair(
+    dir_: Path,
+    *,
+    name: str,
+    category: str,
+    expected: list[dict[str, str]],
+    same_tz: bool,
+) -> None:
+    """Build a one-pair bucket that either matches expectations exactly
+    or produces a known mismatch, for exercising the threshold flags."""
+
+    dir_.mkdir(parents=True)
+    (dir_ / "offline.sql").write_text("SELECT ts FROM events\n")
+    (dir_ / "online.sql").write_text("SELECT ts FROM events\n")
+    meta = {
+        "name": name,
+        "bucket": "synthetic",
+        "category": category,
+        "description": "fixture",
+        "expected_divergences": expected,
+        "offline": {
+            "language": "sql",
+            "source": "offline.sql",
+            "schemas": {"events": [["ts", "timestamp[ns, UTC]"]]},
+        },
+        "online": {
+            "language": "sql",
+            "source": "online.sql",
+            "schemas": {
+                "events": [["ts", "timestamp[ns, UTC]" if same_tz else "timestamp[ns, US/Pacific]"]]
+            },
+        },
+    }
+    with (dir_ / "meta.yaml").open("w") as f:
+        yaml.safe_dump(meta, f, sort_keys=False)
+
+
+def _patch_paths(monkeypatch: pytest.MonkeyPatch, *, pairs_root: Path, results_dir: Path) -> None:
+    """Redirect the evaluator's globals to a tmp bucket layout."""
+
+    import bench.scripts.run_eval as run_eval
+
+    monkeypatch.setattr(run_eval, "PAIRS_ROOT", pairs_root)
+    monkeypatch.setattr(run_eval, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(run_eval, "REPO_ROOT", pairs_root.parent)
+
+
+def test_threshold_flag_passes_when_metrics_meet_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    results_dir = tmp_path / "results"
+    _write_minimal_pair(
+        pairs_root / "synthetic" / "timezone_mismatch" / "tz_001",
+        name="tz_001",
+        category="timezone_mismatch",
+        expected=[{"category": "timezone_mismatch"}],
+        same_tz=False,
+    )
+    _patch_paths(monkeypatch, pairs_root=pairs_root, results_dir=results_dir)
+
+    rc = main(
+        [
+            "--quick",
+            "--out",
+            str(results_dir),
+            "--fail-under-precision",
+            "0.95",
+            "--fail-under-recall",
+            "0.80",
+        ]
+    )
+    assert rc == 0
+    with (results_dir / "synthetic.json").open() as f:
+        summary = json.load(f)
+    assert summary["headline"]["precision"] == 1.0
+
+
+def test_threshold_flag_fails_when_recall_below_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    results_dir = tmp_path / "results"
+    # Build a pair whose expected divergence is timezone_mismatch but
+    # whose two sides are byte-identical -- the engine emits no
+    # divergences, so recall is 0.
+    _write_minimal_pair(
+        pairs_root / "synthetic" / "timezone_mismatch" / "tz_clean",
+        name="tz_clean",
+        category="timezone_mismatch",
+        expected=[{"category": "timezone_mismatch"}],
+        same_tz=True,
+    )
+    _patch_paths(monkeypatch, pairs_root=pairs_root, results_dir=results_dir)
+
+    rc = main(
+        [
+            "--quick",
+            "--out",
+            str(results_dir),
+            "--fail-under-recall",
+            "0.80",
+        ]
+    )
+    assert rc == 1
+
+
+def test_threshold_flag_fails_when_precision_below_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    results_dir = tmp_path / "results"
+    # Identity-ish pair with no expected divergences, but two sides that
+    # genuinely differ -- engine emits a FP, precision drops to 0.
+    _write_minimal_pair(
+        pairs_root / "synthetic" / "identity" / "id_dirty",
+        name="id_dirty",
+        category="identity",
+        expected=[],
+        same_tz=False,
+    )
+    _patch_paths(monkeypatch, pairs_root=pairs_root, results_dir=results_dir)
+
+    rc = main(
+        [
+            "--quick",
+            "--out",
+            str(results_dir),
+            "--fail-under-precision",
+            "0.95",
+        ]
+    )
+    assert rc == 1
+
+
+def test_step_summary_is_written_when_flag_provided(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pairs_root = tmp_path / "pairs"
+    results_dir = tmp_path / "results"
+    summary_file = tmp_path / "step.md"
+    _write_minimal_pair(
+        pairs_root / "synthetic" / "timezone_mismatch" / "tz_001",
+        name="tz_001",
+        category="timezone_mismatch",
+        expected=[{"category": "timezone_mismatch"}],
+        same_tz=False,
+    )
+    _patch_paths(monkeypatch, pairs_root=pairs_root, results_dir=results_dir)
+
+    rc = main(
+        [
+            "--quick",
+            "--out",
+            str(results_dir),
+            "--github-step-summary",
+            str(summary_file),
+        ]
+    )
+    assert rc == 0
+    content = summary_file.read_text()
+    assert "MirrorBench" in content
+    assert "Precision" in content
+    assert "1.000" in content
