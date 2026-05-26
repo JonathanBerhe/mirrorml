@@ -73,13 +73,22 @@ def test_schema_drift_column_only_on_one_side() -> None:
 
 
 def test_schema_drift_op_count_differs() -> None:
+    """Op insertion produces a schema_drift localized to the orphan op
+    (no longer a coarse "operation count differs" message)."""
+
     a = trace_sql("SELECT uid FROM events", schemas={"events": EVENTS})
     b = trace_sql(
         "SELECT uid FROM events WHERE score > 0",
         schemas={"events": EVENTS},
     )
     divs = diff(a, b)
-    assert any(d.category == "schema_drift" and "count" in d.detail for d in divs)
+    extras = [
+        d
+        for d in divs
+        if d.category == "schema_drift" and "extra" in d.detail and "filter" in d.detail
+    ]
+    assert extras, divs
+    assert all(d.right_op_id is not None for d in extras)
 
 
 # --- type_coercion -----------------------------------------------------------
