@@ -1,0 +1,33 @@
+name: adversarial_multi_divergence_tz_and_dtype
+bucket: synthetic
+category: timezone_mismatch
+description: ts has different timezone AND score has different dtype. Engine must
+  emit both timezone_mismatch and type_coercion.
+expected_divergences:
+- category: timezone_mismatch
+- category: type_coercion
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - ts
+      - timestamp[ns, UTC]
+    - - score
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - ts
+      - timestamp[ns, US/Pacific]
+    - - score
+      - int64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

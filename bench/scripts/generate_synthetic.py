@@ -299,46 +299,381 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _aggregation_function_pairs()
     yield from _join_key_mismatch_pairs()
     yield from _ordering_dependence_pairs()
+    yield from _cross_framework_identity_pairs()
+    yield from _cross_framework_divergence_pairs()
+    yield from _adversarial_predicate_pairs()
+    yield from _adversarial_structure_pairs()
+    yield from _adversarial_cosmetic_pairs()
+    yield from _adversarial_multi_divergence_pairs()
 
 
-def _meta_for(spec: dict[str, Any]) -> dict[str, Any]:
-    """Build the ``meta.yaml`` dict from a pair spec."""
+def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a pair spec to the modern format with explicit side dicts.
+
+    Old-style specs use top-level ``offline_sql`` / ``online_sql`` /
+    ``offline_schemas`` / ``online_schemas`` fields and are SQL-only;
+    new-style specs nest each side under ``offline`` / ``online`` with a
+    ``language`` discriminator. Both are accepted so the SQL-only
+    generator functions below do not need to change.
+    """
+
+    if "offline" in spec and "online" in spec:
+        return spec
 
     return {
+        "name": spec["name"],
+        "category": spec["category"],
+        "description": spec["description"],
+        "offline": {
+            "language": "sql",
+            "sql": spec["offline_sql"],
+            "schemas": spec["offline_schemas"],
+        },
+        "online": {
+            "language": "sql",
+            "sql": spec["online_sql"],
+            "schemas": spec["online_schemas"],
+        },
+        "expected_divergences": spec["expected_divergences"],
+    }
+
+
+def _write_side(target: Path, side: dict[str, Any], *, side_label: str) -> dict[str, Any]:
+    """Materialize one side of a pair and return its ``meta.yaml`` fragment."""
+
+    language = side["language"]
+    if language == "sql":
+        source = f"{side_label}.sql"
+        (target / source).write_text(side["sql"])
+        return {
+            "language": "sql",
+            "source": source,
+            "schemas": {
+                table: [list(col) for col in cols] for table, cols in side["schemas"].items()
+            },
+        }
+    if language == "pandas":
+        source = f"{side_label}.py"
+        (target / source).write_text(side["python_source"])
+        return {
+            "language": "pandas",
+            "source": source,
+            "function": side["function"],
+            "input_schema": [list(col) for col in side["input_schema"]],
+            "source_name": side.get("source_name", "input"),
+        }
+    raise ValueError(f"unsupported pair language: {language!r}")
+
+
+def _write_pair(target: Path, spec: dict[str, Any]) -> None:
+    spec = _normalize_spec(spec)
+    target.mkdir(parents=True, exist_ok=True)
+
+    meta_offline = _write_side(target, spec["offline"], side_label="offline")
+    meta_online = _write_side(target, spec["online"], side_label="online")
+
+    meta = {
         "name": spec["name"],
         "bucket": "synthetic",
         "category": spec["category"],
         "description": spec["description"],
         "expected_divergences": spec["expected_divergences"],
-        "offline": {
-            "language": "sql",
-            "source": "offline.sql",
-            "schemas": {
-                table: [list(col) for col in cols]
-                for table, cols in spec["offline_schemas"].items()
-            },
-        },
-        "online": {
-            "language": "sql",
-            "source": "online.sql",
-            "schemas": {
-                table: [list(col) for col in cols] for table, cols in spec["online_schemas"].items()
-            },
-        },
+        "offline": meta_offline,
+        "online": meta_online,
         "generator": {
             "module": "bench.scripts.generate_synthetic",
             "version": 1,
         },
     }
-
-
-def _write_pair(target: Path, spec: dict[str, Any]) -> None:
-    target.mkdir(parents=True, exist_ok=True)
-    meta = _meta_for(spec)
     with (target / "meta.yaml").open("w") as f:
         yaml.safe_dump(meta, f, sort_keys=False)
-    (target / "offline.sql").write_text(spec["offline_sql"])
-    (target / "online.sql").write_text(spec["online_sql"])
+
+
+# --- cross-framework pairs ---------------------------------------------------
+
+
+def _cross_framework_identity_pairs() -> Iterable[dict[str, Any]]:
+    """Cross-framework pairs that MUST diff to ``()`` -- the empirical
+    backbone of PAPER.md C4 (a pandas pipeline and the structurally
+    equivalent SQL query produce equivalent fingerprints)."""
+
+    events = [("uid", "int64"), ("score", "float64")]
+
+    yield {
+        "name": "cross_framework_identity_filter_project",
+        "category": "identity",
+        "description": (
+            "pandas df[df.score > 0][['uid', 'score']] vs SQL "
+            "SELECT uid, score FROM events WHERE score > 0."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": (
+                "def offline(df):\n    return df[df['score'] > 0][['uid', 'score']]\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid, score FROM events WHERE score > 0\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [],
+    }
+
+    yield {
+        "name": "cross_framework_identity_groupby",
+        "category": "identity",
+        "description": (
+            "pandas df.groupby('uid').agg({'score': 'sum'}) vs SQL "
+            "SELECT uid, SUM(score) AS score FROM events GROUP BY uid."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": (
+                "def offline(df):\n    return df.groupby('uid').agg({'score': 'sum'})\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid, SUM(score) AS score FROM events GROUP BY uid\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [],
+    }
+
+    yield {
+        "name": "cross_framework_identity_rename",
+        "category": "identity",
+        "description": (
+            "pandas df.rename(columns={'uid': 'user_id'}) vs SQL "
+            "SELECT uid AS user_id, score FROM events."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": (
+                "def offline(df):\n    return df.rename(columns={'uid': 'user_id'})\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid AS user_id, score FROM events\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [],
+    }
+
+
+def _cross_framework_divergence_pairs() -> Iterable[dict[str, Any]]:
+    """Cross-framework pairs where pandas and SQL DO differ. The diff
+    engine must produce the same divergence categories it would on a
+    same-framework pair with the same structural difference."""
+
+    events = [("uid", "int64"), ("score", "float64")]
+
+    yield {
+        "name": "cross_framework_aggregation_function_sum_vs_avg",
+        "category": "aggregation_function",
+        "description": "pandas sums, SQL averages.",
+        "offline": {
+            "language": "pandas",
+            "python_source": (
+                "def offline(df):\n    return df.groupby('uid').agg({'score': 'sum'})\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid, AVG(score) AS score FROM events GROUP BY uid\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [{"category": "aggregation_function"}],
+    }
+
+    events_utc = [("uid", "int64"), ("ts", "timestamp[ns, UTC]")]
+    events_pt = [("uid", "int64"), ("ts", "timestamp[ns, US/Pacific]")]
+    yield {
+        "name": "cross_framework_timezone_mismatch",
+        "category": "timezone_mismatch",
+        "description": "pandas reads events.ts as UTC; SQL as US/Pacific.",
+        "offline": {
+            "language": "pandas",
+            "python_source": "def offline(df):\n    return df\n",
+            "function": "offline",
+            "input_schema": events_utc,
+            "source_name": "events",
+        },
+        "online": {
+            # SELECT * (not an explicit column list) so the SQL side emits
+            # just a Source op, matching pandas's `return df`. Otherwise
+            # the column-listing Project on the SQL side produces a
+            # spurious schema_drift via length mismatch.
+            "language": "sql",
+            "sql": "SELECT * FROM events\n",
+            "schemas": {"events": events_pt},
+        },
+        "expected_divergences": [{"category": "timezone_mismatch"}],
+    }
+
+
+# --- adversarial pairs ------------------------------------------------------
+
+
+def _adversarial_predicate_pairs() -> Iterable[dict[str, Any]]:
+    """Filter-predicate differences that exercise the classifier's
+    fallback paths.
+
+    Plain threshold changes do not map to any taxonomy category cleanly;
+    the classifier emits ``schema_drift`` as a fallback so the divergence
+    does not silently vanish. NULL-mentioning predicate differences route
+    to ``null_handling``.
+    """
+
+    events = [("uid", "int64"), ("score", "float64")]
+
+    yield {
+        "name": "adversarial_filter_threshold_change",
+        "category": "schema_drift",
+        "description": (
+            "Same shape, different filter threshold. No taxonomy category "
+            "fits cleanly; classifier falls back to schema_drift."
+        ),
+        "offline": {
+            "language": "sql",
+            "sql": "SELECT uid FROM events WHERE score > 0\n",
+            "schemas": {"events": events},
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid FROM events WHERE score > 1\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [{"category": "schema_drift"}],
+    }
+
+    yield {
+        "name": "adversarial_filter_null_handling",
+        "category": "null_handling",
+        "description": (
+            "Offline filters by IS NOT NULL; online uses a numeric "
+            "threshold. The predicate mentions NULL so the classifier "
+            "routes to null_handling."
+        ),
+        "offline": {
+            "language": "sql",
+            "sql": "SELECT uid FROM events WHERE score IS NOT NULL\n",
+            "schemas": {"events": events},
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid FROM events WHERE score > 0\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [{"category": "null_handling"}],
+    }
+
+
+def _adversarial_structure_pairs() -> Iterable[dict[str, Any]]:
+    """Pipelines that differ in OPERATION COUNT, not just operation
+    content. Tests the engine's behavior on length mismatch."""
+
+    events = [("uid", "int64"), ("score", "float64")]
+
+    yield {
+        "name": "adversarial_extra_filter_op",
+        "category": "schema_drift",
+        "description": (
+            "Online has an extra WHERE filter that offline lacks. Length "
+            "mismatch surfaces as schema_drift."
+        ),
+        "offline": {
+            "language": "sql",
+            "sql": "SELECT uid FROM events\n",
+            "schemas": {"events": events},
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid FROM events WHERE score > 0\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [{"category": "schema_drift"}],
+    }
+
+
+def _adversarial_cosmetic_pairs() -> Iterable[dict[str, Any]]:
+    """Cosmetic differences that the canonicalizer must absorb.
+
+    Identity-equivalent SQL that differs only in keyword case or
+    whitespace must diff to ``()``. These pairs guard precision: a
+    false-positive divergence here is the kind that erodes user trust.
+    """
+
+    events = [("uid", "int64"), ("score", "float64")]
+
+    yield {
+        "name": "adversarial_cosmetic_keyword_case",
+        "category": "identity",
+        "description": "Same query, different SQL keyword casing.",
+        "offline": {
+            "language": "sql",
+            "sql": "SELECT uid FROM events WHERE score > 0\n",
+            "schemas": {"events": events},
+        },
+        "online": {
+            "language": "sql",
+            "sql": "select uid from events where score > 0\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [],
+    }
+
+
+def _adversarial_multi_divergence_pairs() -> Iterable[dict[str, Any]]:
+    """A pair where both sides differ in MORE THAN ONE way at once. The
+    engine must surface every category that applies."""
+
+    events_left = [
+        ("uid", "int64"),
+        ("ts", "timestamp[ns, UTC]"),
+        ("score", "float64"),
+    ]
+    events_right = [
+        ("uid", "int64"),
+        ("ts", "timestamp[ns, US/Pacific]"),
+        ("score", "int64"),
+    ]
+    yield {
+        "name": "adversarial_multi_divergence_tz_and_dtype",
+        "category": "timezone_mismatch",
+        "description": (
+            "ts has different timezone AND score has different dtype. "
+            "Engine must emit both timezone_mismatch and type_coercion."
+        ),
+        "offline": {
+            "language": "sql",
+            "sql": "SELECT uid, ts, score FROM events\n",
+            "schemas": {"events": events_left},
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT uid, ts, score FROM events\n",
+            "schemas": {"events": events_right},
+        },
+        "expected_divergences": [
+            {"category": "timezone_mismatch"},
+            {"category": "type_coercion"},
+        ],
+    }
 
 
 def regenerate(target_dir: Path = SYNTHETIC_DIR) -> int:

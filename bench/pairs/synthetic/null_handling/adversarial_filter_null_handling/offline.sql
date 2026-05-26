@@ -1,0 +1,1 @@
+SELECT uid FROM events WHERE score IS NOT NULL

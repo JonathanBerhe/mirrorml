@@ -1,0 +1,28 @@
+name: cross_framework_timezone_mismatch
+bucket: synthetic
+category: timezone_mismatch
+description: pandas reads events.ts as UTC; SQL as US/Pacific.
+expected_divergences:
+- category: timezone_mismatch
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  source_name: events
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - ts
+      - timestamp[ns, US/Pacific]
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

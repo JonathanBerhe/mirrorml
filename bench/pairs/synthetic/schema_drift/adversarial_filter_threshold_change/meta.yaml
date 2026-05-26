@@ -1,0 +1,28 @@
+name: adversarial_filter_threshold_change
+bucket: synthetic
+category: schema_drift
+description: Same shape, different filter threshold. No taxonomy category fits cleanly;
+  classifier falls back to schema_drift.
+expected_divergences:
+- category: schema_drift
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

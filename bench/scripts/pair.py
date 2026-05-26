@@ -8,7 +8,7 @@ In M4 phase 1 only SQL pairs are supported (both sides ``language:
 sql``). The format already accommodates pandas (``language: pandas``)
 for future phases.
 
-``meta.yaml`` schema (phase 1):
+``meta.yaml`` schema (phase 2):
 
 .. code-block:: yaml
 
@@ -20,20 +20,21 @@ for future phases.
     expected_divergences:
       - category: timezone_mismatch
     offline:
-      language: sql                    # sql | pandas (pandas: phase 2)
+      language: sql                    # sql | pandas
       source: offline.sql              # filename relative to pair dir
-      schemas:
+      schemas:                         # required for SQL pairs
         events:
           - [ts, "timestamp[ns, UTC]"]
     online:
-      language: sql
-      source: online.sql
-      schemas:
-        events:
-          - [ts, "timestamp[ns, US/Pacific]"]
+      # Cross-framework example: pandas offline vs SQL online (or any mix).
+      language: pandas
+      source: online.py                # Python module relative to pair dir
+      function: online                 # function name to look up + trace
+      input_schema:                    # required for pandas pairs
+        - [ts, "timestamp[ns, US/Pacific]"]
+      source_name: events              # optional; matches FROM table for cross-framework parity
     generator:                         # synthetic only
       module: bench.scripts.generate_synthetic
-      function: _timezone_mismatch_pairs
       version: 1
     source_url: ...                    # real_world only
     postmortem_url: ...                # replayed_bugs only
@@ -41,13 +42,15 @@ for future phases.
 
 from __future__ import annotations
 
+import importlib.util
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from mirrorml import trace_sql
+from mirrorml import trace_pandas, trace_sql
 from mirrorml.fingerprint.schema import Fingerprint
 
 
@@ -136,15 +139,60 @@ def _trace_side(pair_dir: Path, side: dict[str, Any], *, side_label: str = "?") 
         return trace_sql(query, schemas=schemas, dialect=dialect)
 
     if language == "pandas":
-        raise NotImplementedError(
-            f"pair {pair_dir}: pandas pipelines are not yet supported by the "
-            f"bench loader (lands in M4 phase 2). Affected side: {side_label}"
-        )
+        source_file = pair_dir / side["source"]
+        if not source_file.is_file():
+            raise ValueError(
+                f"pair {pair_dir}: {side_label} source file {source_file.name!r} not found"
+            )
+        function_name = side.get("function", side_label)
+        function = _load_python_function(source_file, function_name, side_label=side_label)
+        raw_schema = side.get("input_schema")
+        if not raw_schema:
+            raise ValueError(
+                f"pair {pair_dir}: {side_label} (pandas) meta.yaml must declare an "
+                f"input_schema list"
+            )
+        input_schema = tuple(tuple(col) for col in raw_schema)
+        source_name = side.get("source_name", "input")
+        return trace_pandas(function, input_schema=input_schema, source_name=source_name)
 
     raise ValueError(
         f"pair {pair_dir}: {side_label} has unknown language {language!r}; "
         f"expected 'sql' or 'pandas'"
     )
+
+
+def _load_python_function(
+    source_file: Path, function_name: str, *, side_label: str
+) -> Callable[..., object]:
+    """Load ``function_name`` from a Python file via importlib.
+
+    The bench loads pair pipelines as modules so each pair file is a real
+    Python module (with its own namespace, imports, etc.). The module is
+    named with the pair-side label so import errors point back at the
+    offending file.
+    """
+
+    spec = importlib.util.spec_from_file_location(f"_mirrorml_bench_pair_{side_label}", source_file)
+    if spec is None or spec.loader is None:
+        raise ValueError(
+            f"pair source file {source_file!r} ({side_label}): "
+            f"importlib could not build a module spec"
+        )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not hasattr(module, function_name):
+        raise ValueError(
+            f"pair source file {source_file.name!r} ({side_label}): "
+            f"no function named {function_name!r} found"
+        )
+    function = getattr(module, function_name)
+    if not callable(function):
+        raise ValueError(
+            f"pair source file {source_file.name!r} ({side_label}): "
+            f"{function_name!r} is not callable"
+        )
+    return function  # type: ignore[no-any-return]
 
 
 def discover_pairs(root: Path) -> list[Path]:

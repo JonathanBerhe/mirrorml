@@ -1,0 +1,28 @@
+name: adversarial_extra_filter_op
+bucket: synthetic
+category: schema_drift
+description: Online has an extra WHERE filter that offline lacks. Length mismatch
+  surfaces as schema_drift.
+expected_divergences:
+- category: schema_drift
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

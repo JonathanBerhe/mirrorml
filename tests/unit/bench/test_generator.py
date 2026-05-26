@@ -88,8 +88,18 @@ def test_committed_synthetic_corpus_matches_fresh_regeneration(tmp_path: Path) -
         "bench/pairs/synthetic/ is missing; run `uv run python -m bench.scripts.generate_synthetic`"
     )
 
-    fresh_files = {p.relative_to(fresh) for p in fresh.rglob("*") if p.is_file()}
-    committed_files = {p.relative_to(committed) for p in committed.rglob("*") if p.is_file()}
+    def _interesting_files(root: Path) -> set[Path]:
+        # __pycache__ entries appear as a side effect of loading pandas
+        # pair modules; they are not part of the corpus and are
+        # gitignored. Skip them here so the drift guard is not noise.
+        return {
+            p.relative_to(root)
+            for p in root.rglob("*")
+            if p.is_file() and "__pycache__" not in p.parts
+        }
+
+    fresh_files = _interesting_files(fresh)
+    committed_files = _interesting_files(committed)
 
     only_in_fresh = sorted(map(str, fresh_files - committed_files))
     only_in_committed = sorted(map(str, committed_files - fresh_files))

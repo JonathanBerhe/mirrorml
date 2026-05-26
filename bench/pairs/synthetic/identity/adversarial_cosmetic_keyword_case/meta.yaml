@@ -1,0 +1,26 @@
+name: adversarial_cosmetic_keyword_case
+bucket: synthetic
+category: identity
+description: Same query, different SQL keyword casing.
+expected_divergences: []
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1
