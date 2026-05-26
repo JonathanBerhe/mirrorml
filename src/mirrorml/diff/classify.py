@@ -75,11 +75,7 @@ def classify_dtype_difference(
     left = parse_dtype(left_dtype)
     right = parse_dtype(right_dtype)
 
-    if (
-        left.kind == "timestamp"
-        and right.kind == "timestamp"
-        and left.timezone != right.timezone
-    ):
+    if left.kind == "timestamp" and right.kind == "timestamp" and left.timezone != right.timezone:
         return Divergence(
             category="timezone_mismatch",
             detail=(
@@ -206,12 +202,15 @@ def classify_op_pair(left: Operation, right: Operation) -> Iterator[Divergence]:
         yield from _classify_window(left, right)
     elif kind == "source":
         yield from _classify_source(left, right)
-    elif kind in ("project", "filter"):
-        # Differences here are visible at the schema level (output_schema)
-        # already, so the op-level diff would be redundant noise. Predicate
-        # changes on Filter do not map to a taxonomy category yet; that is
-        # a phase 2 concern.
-        return
+    elif kind == "project":
+        # Project column lists are reflected in output_schema, so the
+        # schema diff catches add/drop/reorder. Renames live in
+        # schema_delta.renamed and are surfaced here when they differ
+        # (the schema diff alone cannot distinguish rename from
+        # drop+add when both names happen to be unique).
+        yield from _classify_project(left, right)
+    elif kind == "filter":
+        yield from _classify_filter(left, right)
     else:
         yield Divergence(
             category="schema_drift",
@@ -234,6 +233,64 @@ def _classify_source(left: Operation, right: Operation) -> Iterator[Divergence]:
             right_op_id=right.op_id,
             detail=f"source table name: {left.name!r} vs {right.name!r}",
         )
+
+
+def _classify_filter(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two Filter ops. A change to the predicate is a real
+    divergence that does not fit any single taxonomy category cleanly:
+    if the predicate mentions ``NULL`` / ``IS NULL`` we map it to
+    ``null_handling``; otherwise the predicate change is surfaced as a
+    ``schema_drift`` fallback so it cannot silently vanish (CLAUDE.md:
+    false negatives are worse than imperfect classifications)."""
+
+    assert left.kind == "filter" and right.kind == "filter"
+    if left.predicate == right.predicate:
+        return
+
+    detail = f"filter predicate: {left.predicate!r} vs {right.predicate!r}"
+    if _mentions_null(left.predicate) or _mentions_null(right.predicate):
+        yield Divergence(
+            category="null_handling",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=detail,
+        )
+        return
+    yield Divergence(
+        category="schema_drift",
+        left_op_id=left.op_id,
+        right_op_id=right.op_id,
+        detail=detail,
+    )
+
+
+def _classify_project(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two Project ops. Most differences are caught by the
+    schema diff; what is op-local is the rename mapping in
+    schema_delta. A rename change without a column-set change still
+    matters semantically (the same column is now exposed under a
+    different name)."""
+
+    assert left.kind == "project" and right.kind == "project"
+    if left.schema_delta.renamed != right.schema_delta.renamed:
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"project renames: {left.schema_delta.renamed} vs {right.schema_delta.renamed}"
+            ),
+        )
+
+
+def _mentions_null(predicate: object) -> bool:
+    """Heuristic: does a predicate reference null handling? Used to route
+    Filter divergences to the ``null_handling`` category when applicable."""
+
+    if not isinstance(predicate, str):
+        return False
+    upper = predicate.upper()
+    return "NULL" in upper or "COALESCE" in upper or "IFNULL" in upper
 
 
 def _classify_aggregate(left: Operation, right: Operation) -> Iterator[Divergence]:
