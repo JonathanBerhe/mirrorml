@@ -8,7 +8,7 @@ import pytest
 
 from mirrorml import diff, trace_pandas, trace_polars, trace_sql
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Filter, Project, Sort, Source
+from mirrorml.fingerprint.operations import FillNa, Filter, Project, Sort, Source
 
 EVENTS = (("uid", "int64"), ("score", "float64"))
 
@@ -263,6 +263,53 @@ def test_cross_framework_sort_pandas_vs_polars_diffs_to_empty() -> None:
         lambda lf, pl: lf.sort("score", descending=True),
         input_schema=EVENTS,
         source_name="events",
+    )
+    assert diff(pandas_fp, polars_fp) == ()
+
+
+# --- fillna -----------------------------------------------------------------
+
+
+def test_fillna_scalar_fills_all_columns() -> None:
+    fp = trace_pandas(lambda df: df.fillna(0), input_schema=EVENTS)
+    assert [op.kind for op in fp.operations] == ["source", "fill_na"]
+    op = fp.operations[1]
+    assert isinstance(op, FillNa)
+    assert op.columns == ("uid", "score")
+    assert op.value == "0"
+    assert op.strategy == "constant"
+    assert fp.output_schema == EVENTS
+
+
+def test_fillna_dict_fills_named_columns() -> None:
+    fp = trace_pandas(lambda df: df.fillna({"score": -1}), input_schema=EVENTS)
+    op = fp.operations[1]
+    assert isinstance(op, FillNa)
+    assert op.columns == ("score",)
+    assert op.value == "-1"
+
+
+def test_fillna_differing_per_column_values_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="differing per-column"):
+        trace_pandas(lambda df: df.fillna({"uid": 0, "score": 1}), input_schema=EVENTS)
+
+
+def test_fillna_no_value_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="scalar value"):
+        trace_pandas(lambda df: df.fillna(), input_schema=EVENTS)
+
+
+def test_fillna_value_difference_surfaces_null_handling() -> None:
+    a = trace_pandas(lambda df: df.fillna(0), input_schema=EVENTS, source_name="e")
+    b = trace_pandas(lambda df: df.fillna(-1), input_schema=EVENTS, source_name="e")
+    divs = diff(a, b)
+    assert [d.category for d in divs] == ["null_handling"]
+
+
+def test_cross_framework_fillna_pandas_vs_polars_diffs_to_empty() -> None:
+    pandas_fp = trace_pandas(lambda df: df.fillna(0), input_schema=EVENTS, source_name="events")
+    polars_fp = trace_polars(
+        lambda lf, pl: lf.fill_null(0), input_schema=EVENTS, source_name="events"
     )
     assert diff(pandas_fp, polars_fp) == ()
 

@@ -31,6 +31,7 @@ from mirrorml.exceptions import UnsupportedOperationError
 from mirrorml.fingerprint.operations import (
     Aggregate,
     AsOfJoin,
+    FillNa,
     Filter,
     Project,
     Sort,
@@ -448,6 +449,37 @@ class _TraceLazyFrame:
     def groupby(self, *by: object) -> _TraceGroupBy:
         """Alias for :meth:`group_by` (Polars < 0.20 spelling)."""
         return self.group_by(*by)
+
+    def fill_null(self, value: object = None) -> _TraceLazyFrame:
+        """Emit a :class:`FillNa` op for a constant fill over all columns.
+        Only the scalar-value form is supported; strategy-based fills
+        (``fill_null(strategy=...)``) are deferred. Output schema is
+        unchanged. Renders the fill value the same way the pandas tracer
+        does, so an equivalent fillna / fill_null diffs to ()."""
+
+        fill = _unwrap(value)
+        if fill is None:
+            raise UnsupportedOperationError(
+                "polars tracer: fill_null needs a scalar fill value; strategy-based "
+                "fill_null is deferred."
+            )
+        if not isinstance(fill, int | float | str | bool):
+            raise UnsupportedOperationError(
+                f"polars tracer: fill_null value must be a scalar literal; "
+                f"got {type(fill).__name__}"
+            )
+
+        op_id = f"fill_na_{next_op_index(self._operations)}"
+        self._operations.append(
+            FillNa(
+                op_id=op_id,
+                dependencies=(self._last_op_id,),
+                columns=tuple(self._schema),
+                value=render_literal(fill),
+                strategy="constant",
+            )
+        )
+        return self._derive(dict(self._schema), op_id)
 
     def sort(self, by: object, *more_by: object, descending: object = False) -> _TraceLazyFrame:
         """Emit a :class:`Sort` op. ``by`` (plus any ``*more_by``) are column

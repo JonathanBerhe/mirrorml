@@ -211,6 +211,8 @@ def classify_op_pair(left: Operation, right: Operation) -> Iterator[Divergence]:
         yield from _classify_project(left, right)
     elif kind == "filter":
         yield from _classify_filter(left, right)
+    elif kind == "fill_na":
+        yield from _classify_fill_na(left, right)
     else:
         yield Divergence(
             category="schema_drift",
@@ -280,6 +282,35 @@ def _classify_project(left: Operation, right: Operation) -> Iterator[Divergence]
             detail=(
                 f"project renames: {left.schema_delta.renamed} vs {right.schema_delta.renamed}"
             ),
+        )
+
+
+def _classify_fill_na(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two FillNa ops. Every difference (filled columns, fill value,
+    or fill strategy) is a ``null_handling`` divergence: filling nulls with
+    0 offline and the mean online is a textbook training-serving skew."""
+
+    assert left.kind == "fill_na" and right.kind == "fill_na"
+    if left.columns != right.columns:
+        yield Divergence(
+            category="null_handling",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"fill_na columns: {left.columns} vs {right.columns}",
+        )
+    if left.value != right.value:
+        yield Divergence(
+            category="null_handling",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"fill_na value: {left.value!r} vs {right.value!r}",
+        )
+    if left.strategy != right.strategy:
+        yield Divergence(
+            category="null_handling",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"fill_na strategy: {left.strategy!r} vs {right.strategy!r}",
         )
 
 

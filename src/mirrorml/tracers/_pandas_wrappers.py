@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source
+from mirrorml.fingerprint.operations import Aggregate, FillNa, Filter, Project, Sort, Source
 from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta
 from mirrorml.tracers._trace_common import (
     TracePredicate,
@@ -314,6 +314,65 @@ class _TraceFrame:
                 op_id=op_id,
                 dependencies=(self._last_op_id,),
                 by=sort_directions(keys, flags),
+            )
+        )
+        return _TraceFrame(
+            schema=dict(self._schema),
+            operations=self._operations,
+            last_op_id=op_id,
+        )
+
+    def fillna(self, value: object = None) -> _TraceFrame:
+        """Emit a :class:`FillNa` op for a constant fill. ``value`` is a
+        scalar (fills every column) or a ``{column: value}`` dict whose
+        values are all the same constant (FillNa carries a single value).
+        Method/strategy-based fills are deferred. Output schema unchanged."""
+
+        if isinstance(value, dict):
+            if not value:
+                raise UnsupportedOperationError("pandas tracer: fillna dict is empty")
+            columns: tuple[str, ...] = tuple(value)
+            rendered: set[str] = set()
+            for col, fill in value.items():
+                if not isinstance(col, str):
+                    raise UnsupportedOperationError(
+                        f"pandas tracer: fillna dict keys must be column names; "
+                        f"got {type(col).__name__}"
+                    )
+                if col not in self._schema:
+                    raise UnsupportedOperationError(
+                        f"pandas tracer: fillna column {col!r} not in frame. "
+                        f"Available: {sorted(self._schema)}"
+                    )
+                rendered.add(render_literal(fill))
+            if len(rendered) != 1:
+                raise UnsupportedOperationError(
+                    "pandas tracer: fillna with differing per-column values is not yet "
+                    "supported (FillNa carries one value); use one value per fillna call."
+                )
+            fill_value = rendered.pop()
+        elif value is None:
+            raise UnsupportedOperationError(
+                "pandas tracer: fillna needs a scalar value or a {column: value} dict; "
+                "method-based fills (ffill/bfill) are deferred."
+            )
+        elif isinstance(value, int | float | str | bool):
+            columns = tuple(self._schema)
+            fill_value = render_literal(value)
+        else:
+            raise UnsupportedOperationError(
+                f"pandas tracer: fillna value must be a scalar or a {{column: value}} dict; "
+                f"got {type(value).__name__}"
+            )
+
+        op_id = f"fill_na_{next_op_index(self._operations)}"
+        self._operations.append(
+            FillNa(
+                op_id=op_id,
+                dependencies=(self._last_op_id,),
+                columns=columns,
+                value=fill_value,
+                strategy="constant",
             )
         )
         return _TraceFrame(

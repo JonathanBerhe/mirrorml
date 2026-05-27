@@ -1,0 +1,28 @@
+name: cross_framework_identity_fillna
+bucket: synthetic
+category: identity
+description: pandas df.fillna(0) vs polars lf.fill_null(0); diff empty.
+expected_divergences: []
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

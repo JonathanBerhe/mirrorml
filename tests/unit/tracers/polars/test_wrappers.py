@@ -18,6 +18,7 @@ from mirrorml.exceptions import UnsupportedOperationError
 from mirrorml.fingerprint.operations import (
     Aggregate,
     AsOfJoin,
+    FillNa,
     Filter,
     Project,
     Sort,
@@ -527,6 +528,38 @@ def test_join_asof_on_column_missing_rejected() -> None:
 
     with pytest.raises(UnsupportedOperationError, match="on="):
         trace_polars(offline, input_schema=ASOF_LEFT)
+
+
+# --- fill_null --------------------------------------------------------------
+
+
+def test_fill_null_scalar_fills_all_columns() -> None:
+    fp = trace_polars(lambda lf, pl: lf.fill_null(0), input_schema=EVENTS)
+    assert [op.kind for op in fp.operations] == ["source", "fill_na"]
+    op = fp.operations[1]
+    assert isinstance(op, FillNa)
+    assert op.columns == ("uid", "score")
+    assert op.value == "0"
+    assert op.strategy == "constant"
+
+
+def test_fill_null_via_lit() -> None:
+    fp = trace_polars(lambda lf, pl: lf.fill_null(pl.lit(0)), input_schema=EVENTS)
+    op = fp.operations[1]
+    assert isinstance(op, FillNa)
+    assert op.value == "0"
+
+
+def test_fill_null_no_value_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="scalar fill value"):
+        trace_polars(lambda lf, pl: lf.fill_null(), input_schema=EVENTS)
+
+
+def test_fill_null_value_difference_surfaces_null_handling() -> None:
+    a = trace_polars(lambda lf, pl: lf.fill_null(0), input_schema=EVENTS, source_name="e")
+    b = trace_polars(lambda lf, pl: lf.fill_null(-1), input_schema=EVENTS, source_name="e")
+    divs = diff(a, b)
+    assert [d.category for d in divs] == ["null_handling"]
 
 
 # --- cross-framework equivalence (PAPER.md C4, third framework) -------------

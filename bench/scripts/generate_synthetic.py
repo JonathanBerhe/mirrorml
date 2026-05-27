@@ -443,6 +443,58 @@ def _as_of_join_pairs() -> Iterable[dict[str, Any]]:
         }
 
 
+def _fill_na_pairs() -> Iterable[dict[str, Any]]:
+    """Null-fill pairs. The identity pair (pandas fillna vs Polars fill_null,
+    same constant) must diff to ``()``; the value-difference pairs surface
+    ``null_handling`` (filling nulls with different constants offline vs
+    online is a textbook skew)."""
+
+    events = [("uid", "int64"), ("score", "float64")]
+
+    yield {
+        "name": "cross_framework_identity_fillna",
+        "category": "identity",
+        "description": "pandas df.fillna(0) vs polars lf.fill_null(0); diff empty.",
+        "offline": {
+            "language": "pandas",
+            "python_source": "def offline(df):\n    return df.fillna(0)\n",
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": "def online(lf, pl):\n    return lf.fill_null(0)\n",
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [],
+    }
+
+    for i, (off_v, on_v) in enumerate([("0", "-1"), ("0", "999")]):
+        yield {
+            "name": f"fillna_null_handling_{i:03d}",
+            "category": "null_handling",
+            "description": (f"Offline fills score's nulls with {off_v}; online with {on_v}."),
+            "offline": {
+                "language": "pandas",
+                "python_source": f"def offline(df):\n    return df.fillna({{'score': {off_v}}})\n",
+                "function": "offline",
+                "input_schema": events,
+                "source_name": "events",
+            },
+            "online": {
+                "language": "pandas",
+                "python_source": f"def online(df):\n    return df.fillna({{'score': {on_v}}})\n",
+                "function": "online",
+                "input_schema": events,
+                "source_name": "events",
+            },
+            "expected_divergences": [{"category": "null_handling"}],
+        }
+
+
 def _identity_pairs() -> Iterable[dict[str, Any]]:
     """Negative-control pairs: structurally equivalent pipelines that
     must diff to ``()``. These are essential for precision; without
@@ -500,6 +552,7 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _window_function_pairs()
     yield from _window_boundary_pairs()
     yield from _as_of_join_pairs()
+    yield from _fill_na_pairs()
     yield from _cross_framework_identity_pairs()
     yield from _cross_framework_divergence_pairs()
     yield from _cross_framework_polars_pairs()
