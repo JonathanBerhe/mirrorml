@@ -91,7 +91,7 @@ def trace_polars(
         input_schema=input_schema_tuple,
     )
 
-    result = pipeline(frame, _TraceExprNamespace())
+    result = pipeline(frame, _TraceExprNamespace(operations))
 
     if not isinstance(result, _TraceLazyFrame):
         raise UnsupportedOperationError(

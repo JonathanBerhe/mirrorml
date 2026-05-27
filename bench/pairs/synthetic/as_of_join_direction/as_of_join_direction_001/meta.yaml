@@ -1,0 +1,33 @@
+name: as_of_join_direction_001
+bucket: synthetic
+category: as_of_join_direction
+description: Offline as-of join 'backward'; online 'nearest'.
+expected_divergences:
+- category: as_of_join_direction
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

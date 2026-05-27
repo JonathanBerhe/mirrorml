@@ -28,7 +28,15 @@ from __future__ import annotations
 from typing import Literal
 
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source, Window
+from mirrorml.fingerprint.operations import (
+    Aggregate,
+    AsOfJoin,
+    Filter,
+    Project,
+    Sort,
+    Source,
+    Window,
+)
 from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta, TemporalSemantics
 from mirrorml.tracers._trace_common import (
     TracePredicate,
@@ -210,7 +218,18 @@ class _TraceColExpr:
 
 class _TraceExprNamespace:
     """The injected ``pl`` namespace. Exposes the supported slice of the
-    Polars expression API (``col``, ``lit``)."""
+    Polars expression API (``col``, ``lit``) plus ``source`` for declaring
+    a second input table (needed for joins).
+
+    Holds the shared operations list so ``source`` can record a new
+    :class:`Source` op; this keeps ``trace_polars``'s public signature
+    unchanged (a second table is declared inline in the pipeline rather
+    than passed as another argument)."""
+
+    __slots__ = ("_operations",)
+
+    def __init__(self, operations: list[Operation]) -> None:
+        self._operations = operations
 
     def col(self, name: str, *more: str) -> _TraceColExpr:
         if more:
@@ -227,6 +246,29 @@ class _TraceExprNamespace:
 
     def lit(self, value: object) -> _TraceLit:
         return _TraceLit(value)
+
+    def source(self, name: str, *, schema: object) -> _TraceLazyFrame:
+        """Declare a second input table by name and schema, returning a
+        traced frame for it. The ``schema`` is an iterable of
+        ``(column, dtype)`` pairs (same shape as ``trace_polars``'s
+        ``input_schema``)."""
+
+        if not isinstance(name, str):
+            raise UnsupportedOperationError(
+                f"polars tracer: pl.source(...) name must be a string; got {type(name).__name__}"
+            )
+        if not isinstance(schema, list | tuple):
+            raise UnsupportedOperationError(
+                "polars tracer: pl.source(...) schema must be a list of (column, dtype) pairs"
+            )
+        columns = tuple((str(col), str(dtype)) for col, dtype in schema)
+        op_id = f"source_{next_op_index(self._operations)}"
+        self._operations.append(Source(op_id=op_id, name=name, columns=columns))
+        return _TraceLazyFrame(
+            schema=dict(columns),
+            operations=self._operations,
+            last_op_id=op_id,
+        )
 
 
 class _TraceLazyFrame:
@@ -527,6 +569,89 @@ class _TraceLazyFrame:
             closed=_CLOSED_MAP[closed],
             over=tuple(over),
         )
+
+    def join_asof(
+        self,
+        other: object,
+        *,
+        on: object,
+        by: object = None,
+        strategy: object = "backward",
+        tolerance: object = None,
+    ) -> _TraceLazyFrame:
+        """As-of (point-in-time) join against a second frame (from
+        ``pl.source(...)``). Emits an :class:`AsOfJoin` op. ``strategy``
+        maps to the temporal direction, the dominant skew source for these
+        joins."""
+
+        if not isinstance(other, _TraceLazyFrame):
+            raise UnsupportedOperationError(
+                f"polars tracer: join_asof right side must be a frame from "
+                f"pl.source(...); got {type(other).__name__}"
+            )
+        if not isinstance(on, str):
+            raise UnsupportedOperationError(
+                "polars tracer: join_asof on= must be a single time-column name"
+            )
+        if on not in self._schema or on not in other._schema:
+            raise UnsupportedOperationError(
+                f"polars tracer: join_asof on={on!r} must exist on both sides "
+                f"(left {sorted(self._schema)}, right {sorted(other._schema)})"
+            )
+        if strategy not in ("backward", "forward", "nearest"):
+            raise UnsupportedOperationError(
+                f"polars tracer: join_asof strategy must be 'backward', 'forward', "
+                f"or 'nearest'; got {strategy!r}"
+            )
+
+        by_keys: list[str] = []
+        if by is not None:
+            for key in _flatten((by,)):
+                if isinstance(key, str):
+                    name = key
+                elif isinstance(key, _TraceColExpr):
+                    name = key.input_name
+                else:
+                    raise UnsupportedOperationError(
+                        f"polars tracer: join_asof by= must be column names or "
+                        f"pl.col(...); got {type(key).__name__}"
+                    )
+                if name not in self._schema or name not in other._schema:
+                    raise UnsupportedOperationError(
+                        f"polars tracer: join_asof by-key {name!r} must exist on both sides"
+                    )
+                by_keys.append(name)
+
+        if tolerance is not None and not isinstance(tolerance, str):
+            raise UnsupportedOperationError(
+                "polars tracer: join_asof tolerance must be a duration string like '1d' or None"
+            )
+
+        # Output schema: all left columns, then right columns that are not
+        # the as-of key or a by-key (those come from the left), suffixing
+        # any remaining name collisions (mirrors the SQL join merge).
+        shared = {on, *by_keys}
+        merged = dict(self._schema)
+        for col, dtype in other._schema.items():
+            if col in shared:
+                continue
+            candidate = col
+            while candidate in merged:
+                candidate = f"{candidate}_right"
+            merged[candidate] = dtype
+
+        op_id = f"as_of_join_{next_op_index(self._operations)}"
+        self._operations.append(
+            AsOfJoin(
+                op_id=op_id,
+                dependencies=(self._last_op_id, other._last_op_id),
+                left_keys=tuple(by_keys),
+                right_keys=tuple(by_keys),
+                on_time=on,
+                temporal=TemporalSemantics(direction=strategy, tolerance=tolerance),
+            )
+        )
+        return self._derive(merged, op_id)
 
 
 class _TraceGroupBy:

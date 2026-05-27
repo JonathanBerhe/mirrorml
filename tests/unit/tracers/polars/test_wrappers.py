@@ -15,7 +15,15 @@ import pytest
 
 from mirrorml import diff, trace_pandas, trace_polars, trace_sql
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source, Window
+from mirrorml.fingerprint.operations import (
+    Aggregate,
+    AsOfJoin,
+    Filter,
+    Project,
+    Sort,
+    Source,
+    Window,
+)
 from mirrorml.fingerprint.schema import Fingerprint
 
 EVENTS = (("uid", "int64"), ("score", "float64"))
@@ -449,6 +457,76 @@ def test_rolling_unknown_index_column_rejected() -> None:
             ),
             input_schema=TS_EVENTS,
         )
+
+
+# --- join_asof (point-in-time joins -> AsOfJoin op, as_of_join_direction) ---
+
+ASOF_LEFT = (("uid", "int64"), ("ts", "timestamp[ns, UTC]"), ("score", "float64"))
+ASOF_RIGHT = [("uid", "int64"), ("ts", "timestamp[ns, UTC]"), ("price", "float64")]
+
+
+def _asof(strategy: str = "backward", tolerance: str | None = None) -> Fingerprint:
+    def offline(lf: object, pl: object) -> object:
+        prices = pl.source("prices", schema=ASOF_RIGHT)  # type: ignore[attr-defined]
+        return lf.join_asof(  # type: ignore[attr-defined]
+            prices, on="ts", by="uid", strategy=strategy, tolerance=tolerance
+        )
+
+    return trace_polars(offline, input_schema=ASOF_LEFT, source_name="events")
+
+
+def test_join_asof_emits_as_of_join_op() -> None:
+    fp = _asof("backward")
+    assert [op.kind for op in fp.operations] == ["source", "source", "as_of_join"]
+    aj = fp.operations[-1]
+    assert isinstance(aj, AsOfJoin)
+    assert aj.left_keys == ("uid",)
+    assert aj.right_keys == ("uid",)
+    assert aj.on_time == "ts"
+    assert aj.temporal.direction == "backward"
+    # left columns + right's non-shared column (price).
+    assert fp.output_schema == (
+        ("uid", "int64"),
+        ("ts", "timestamp[ns, UTC]"),
+        ("score", "float64"),
+        ("price", "float64"),
+    )
+
+
+def test_identical_asof_joins_diff_to_empty() -> None:
+    assert diff(_asof("backward"), _asof("backward")) == ()
+
+
+def test_different_asof_direction_surfaces_divergence() -> None:
+    divs = diff(_asof("backward"), _asof("forward"))
+    assert [d.category for d in divs] == ["as_of_join_direction"]
+
+
+def test_different_asof_tolerance_surfaces_divergence() -> None:
+    divs = diff(_asof("backward", tolerance="1d"), _asof("backward", tolerance="2d"))
+    assert any(d.category == "as_of_join_direction" for d in divs)
+
+
+def test_join_asof_bad_strategy_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="strategy"):
+        _asof("sideways")
+
+
+def test_join_asof_non_frame_right_rejected() -> None:
+    def offline(lf: object, pl: object) -> object:
+        return lf.join_asof("not a frame", on="ts", by="uid")  # type: ignore[attr-defined]
+
+    with pytest.raises(UnsupportedOperationError, match="must be a frame"):
+        trace_polars(offline, input_schema=ASOF_LEFT)
+
+
+def test_join_asof_on_column_missing_rejected() -> None:
+    def offline(lf: object, pl: object) -> object:
+        prices = pl.source("prices", schema=ASOF_RIGHT)  # type: ignore[attr-defined]
+        return lf.join_asof(prices, on="nope", by="uid")  # type: ignore[attr-defined]
+
+    with pytest.raises(UnsupportedOperationError, match="on="):
+        trace_polars(offline, input_schema=ASOF_LEFT)
 
 
 # --- cross-framework equivalence (PAPER.md C4, third framework) -------------

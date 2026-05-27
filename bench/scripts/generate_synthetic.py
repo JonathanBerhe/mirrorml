@@ -378,6 +378,71 @@ def _window_boundary_pairs() -> Iterable[dict[str, Any]]:
         }
 
 
+def _asof_join_polars_src(strategy: str, function: str) -> str:
+    """A Polars as-of join pipeline. The right table (prices) is declared
+    inline via pl.source so trace_polars's signature stays single-source."""
+
+    return (
+        f"def {function}(lf, pl):\n"
+        f"    prices = pl.source('prices', schema=[('uid', 'int64'), "
+        f"('ts', 'timestamp[ns, UTC]'), ('price', 'float64')])\n"
+        f"    return lf.join_asof(prices, on='ts', by='uid', strategy='{strategy}')\n"
+    )
+
+
+def _as_of_join_pairs() -> Iterable[dict[str, Any]]:
+    """Polars as-of-join pairs that differ only in the join direction
+    (``strategy``). These activate ``as_of_join_direction``, the dominant
+    point-in-time skew source."""
+
+    schema = [("uid", "int64"), ("ts", "timestamp[ns, UTC]"), ("score", "float64")]
+
+    yield {
+        "name": "identity_asof_join",
+        "category": "identity",
+        "description": "Same backward as-of join on both sides; diff must be empty.",
+        "offline": {
+            "language": "polars",
+            "python_source": _asof_join_polars_src("backward", "offline"),
+            "function": "offline",
+            "input_schema": schema,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": _asof_join_polars_src("backward", "online"),
+            "function": "online",
+            "input_schema": schema,
+            "source_name": "events",
+        },
+        "expected_divergences": [],
+    }
+
+    for i, (off_s, on_s) in enumerate(
+        [("backward", "forward"), ("backward", "nearest"), ("forward", "nearest")]
+    ):
+        yield {
+            "name": f"as_of_join_direction_{i:03d}",
+            "category": "as_of_join_direction",
+            "description": f"Offline as-of join {off_s!r}; online {on_s!r}.",
+            "offline": {
+                "language": "polars",
+                "python_source": _asof_join_polars_src(off_s, "offline"),
+                "function": "offline",
+                "input_schema": schema,
+                "source_name": "events",
+            },
+            "online": {
+                "language": "polars",
+                "python_source": _asof_join_polars_src(on_s, "online"),
+                "function": "online",
+                "input_schema": schema,
+                "source_name": "events",
+            },
+            "expected_divergences": [{"category": "as_of_join_direction"}],
+        }
+
+
 def _identity_pairs() -> Iterable[dict[str, Any]]:
     """Negative-control pairs: structurally equivalent pipelines that
     must diff to ``()``. These are essential for precision; without
@@ -434,6 +499,7 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _ordering_dependence_pairs()
     yield from _window_function_pairs()
     yield from _window_boundary_pairs()
+    yield from _as_of_join_pairs()
     yield from _cross_framework_identity_pairs()
     yield from _cross_framework_divergence_pairs()
     yield from _cross_framework_polars_pairs()
