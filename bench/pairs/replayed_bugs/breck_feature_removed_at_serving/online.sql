@@ -1,0 +1,1 @@
+SELECT uid FROM events

@@ -1,0 +1,25 @@
+name: breck_feature_removed_at_serving
+bucket: replayed_bugs
+category: schema_drift
+description: >
+  Reconstructs the feature-skew class in Breck et al., "Data Validation for
+  Machine Learning" (MLSys 2019), where a developer adds or removes a feature
+  so it is present in training but absent at serving. Offline projects
+  (uid, score); the serving side drops score.
+postmortem_url: https://proceedings.mlsys.org/paper_files/paper/2019/hash/928f1160e52192e3e0017fb63ab65391-Abstract.html
+expected_divergences:
+  - category: schema_drift
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+      - [uid, int64]
+      - [score, float64]
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+      - [uid, int64]
+      - [score, float64]

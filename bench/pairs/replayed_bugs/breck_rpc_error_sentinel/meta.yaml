@@ -1,0 +1,28 @@
+name: breck_rpc_error_sentinel
+bucket: replayed_bugs
+category: null_handling
+description: >
+  Reconstructs the production outage in Breck et al., "Data Validation for
+  Machine Learning" (MLSys 2019): a data-fetching RPC began failing and
+  returned the error code -1 instead of the value, and -1 (a valid int)
+  propagated into serving undetected. Offline fills the feature's missing
+  values with 0; the serving side substitutes the -1 error sentinel.
+postmortem_url: https://proceedings.mlsys.org/paper_files/paper/2019/hash/928f1160e52192e3e0017fb63ab65391-Abstract.html
+expected_divergences:
+  - category: null_handling
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+    - [uid, int64]
+    - [score, float64]
+  source_name: events
+online:
+  language: pandas
+  source: online.py
+  function: online
+  input_schema:
+    - [uid, int64]
+    - [score, float64]
+  source_name: events
