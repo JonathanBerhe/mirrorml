@@ -1,0 +1,29 @@
+name: pit_leakage_forward_asof
+bucket: replayed_bugs
+category: as_of_join_direction
+description: >
+  Reconstructs temporal (look-ahead) leakage, documented as a widespread
+  real failure across 294 ML-based-science papers in Kapoor and Narayanan,
+  "Leakage and the Reproducibility Crisis in ML-based Science" (Patterns,
+  2023): violating chronology joins a label to feature values from AFTER the
+  label event. Here training uses a forward as-of join (leaks future), while
+  serving uses the point-in-time-correct backward as-of join.
+postmortem_url: https://arxiv.org/abs/2207.07048
+expected_divergences:
+  - category: as_of_join_direction
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+    - [uid, int64]
+    - [ts, "timestamp[ns, UTC]"]
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+    - [uid, int64]
+    - [ts, "timestamp[ns, UTC]"]
+  source_name: events
