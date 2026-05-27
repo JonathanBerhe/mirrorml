@@ -25,9 +25,11 @@ sorts, and window functions land in later phases.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source
-from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta
+from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source, Window
+from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta, TemporalSemantics
 from mirrorml.tracers._trace_common import (
     TracePredicate,
     aggregation_output_dtype,
@@ -36,6 +38,14 @@ from mirrorml.tracers._trace_common import (
     resolve_agg_func,
     sort_directions,
 )
+
+# Polars rolling `closed` values -> our TemporalSemantics.closed vocabulary.
+_CLOSED_MAP: dict[str, Literal["left", "right", "both", "neither"]] = {
+    "left": "left",
+    "right": "right",
+    "both": "both",
+    "none": "neither",
+}
 
 # Polars reduction-method names -> canonical reduction names. The canonical
 # set is shared with the pandas and SQL tracers, so an Aggregate emitted
@@ -449,6 +459,75 @@ class _TraceLazyFrame:
         )
         return self._derive(dict(self._schema), op_id)
 
+    def rolling(
+        self,
+        index_column: object,
+        *,
+        period: object,
+        offset: object = None,
+        closed: object = "right",
+        group_by: object = None,
+    ) -> _TraceRolling:
+        """Open a time-based rolling window. ``.agg(...)`` emits the
+        :class:`Window` op. Mirrors ``polars.LazyFrame.rolling``; the
+        explicit ``closed`` boundary is what makes ``window_boundary``
+        detectable. ``offset`` is not yet modeled and must be left unset."""
+
+        if isinstance(index_column, _TraceColExpr):
+            index_name = index_column.input_name
+        elif isinstance(index_column, str):
+            index_name = index_column
+        else:
+            raise UnsupportedOperationError(
+                f"polars tracer: rolling index_column must be a column name or "
+                f"pl.col(...); got {type(index_column).__name__}"
+            )
+        if index_name not in self._schema:
+            raise UnsupportedOperationError(
+                f"polars tracer: rolling index_column {index_name!r} not in frame. "
+                f"Available: {sorted(self._schema)}"
+            )
+        if not isinstance(period, str):
+            raise UnsupportedOperationError(
+                "polars tracer: rolling period must be a duration string like '3d'."
+            )
+        if offset is not None:
+            raise UnsupportedOperationError(
+                "polars tracer: rolling offset is not yet modeled; leave it unset."
+            )
+        if not isinstance(closed, str) or closed not in _CLOSED_MAP:
+            raise UnsupportedOperationError(
+                f"polars tracer: rolling closed must be one of {sorted(_CLOSED_MAP)}; "
+                f"got {closed!r}"
+            )
+
+        over: list[str] = []
+        if group_by is not None:
+            for key in _flatten((group_by,)):
+                if isinstance(key, str):
+                    name = key
+                elif isinstance(key, _TraceColExpr):
+                    name = key.input_name
+                else:
+                    raise UnsupportedOperationError(
+                        f"polars tracer: rolling group_by must be a column name or "
+                        f"pl.col(...); got {type(key).__name__}"
+                    )
+                if name not in self._schema:
+                    raise UnsupportedOperationError(
+                        f"polars tracer: rolling group_by key {name!r} not in frame. "
+                        f"Available: {sorted(self._schema)}"
+                    )
+                over.append(name)
+
+        return _TraceRolling(
+            frame=self,
+            index_column=index_name,
+            period=period,
+            closed=_CLOSED_MAP[closed],
+            over=tuple(over),
+        )
+
 
 class _TraceGroupBy:
     """A captured group_by. ``.agg(*exprs)`` emits the :class:`Aggregate`."""
@@ -496,6 +575,74 @@ class _TraceGroupBy:
         )
 
         output_schema: dict[str, str] = {key: self._frame._schema[key] for key in self._by}
+        for output_col, input_col, func in aggregations:
+            output_schema[output_col] = aggregation_output_dtype(
+                func, input_col, self._frame._schema
+            )
+
+        return self._frame._derive(output_schema, op_id)
+
+
+class _TraceRolling:
+    """A captured time-based rolling window (``LazyFrame.rolling``).
+
+    ``.agg(*exprs)`` emits the :class:`Window` op. The output schema, like
+    Polars's, is the partition keys, then the index column, then the
+    aggregation outputs."""
+
+    __slots__ = ("_closed", "_frame", "_index_column", "_over", "_period")
+
+    def __init__(
+        self,
+        *,
+        frame: _TraceLazyFrame,
+        index_column: str,
+        period: str,
+        closed: Literal["left", "right", "both", "neither"],
+        over: tuple[str, ...],
+    ) -> None:
+        self._frame = frame
+        self._index_column = index_column
+        self._period = period
+        self._closed = closed
+        self._over = over
+
+    def agg(self, *exprs: object) -> _TraceLazyFrame:
+        agg_exprs = _flatten(exprs)
+        if not agg_exprs:
+            raise UnsupportedOperationError(
+                "polars tracer: rolling().agg() needs at least one aggregation"
+            )
+
+        aggregations: list[tuple[str, str | None, str]] = []
+        for e in agg_exprs:
+            if not isinstance(e, _TraceAggExpr):
+                raise UnsupportedOperationError(
+                    f"polars tracer: rolling().agg() expects aggregation expressions "
+                    f"like pl.col('x').mean(); got {type(e).__name__}"
+                )
+            if e._input not in self._frame._schema:
+                raise UnsupportedOperationError(
+                    f"polars tracer: agg references column {e._input!r}, which is not "
+                    f"in the frame. Available: {sorted(self._frame._schema)}"
+                )
+            aggregations.append((e._output, e._input, e._func))
+
+        op_id = f"window_{next_op_index(self._frame._operations)}"
+        self._frame._operations.append(
+            Window(
+                op_id=op_id,
+                dependencies=(self._frame._last_op_id,),
+                over=self._over,
+                order_by=(self._index_column,),
+                size=self._period,
+                aggregations=tuple(aggregations),
+                temporal=TemporalSemantics(closed=self._closed),
+            )
+        )
+
+        output_schema: dict[str, str] = {key: self._frame._schema[key] for key in self._over}
+        output_schema[self._index_column] = self._frame._schema[self._index_column]
         for output_col, input_col, func in aggregations:
             output_schema[output_col] = aggregation_output_dtype(
                 func, input_col, self._frame._schema

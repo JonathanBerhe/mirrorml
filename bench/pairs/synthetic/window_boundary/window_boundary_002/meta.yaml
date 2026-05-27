@@ -1,0 +1,33 @@
+name: window_boundary_002
+bucket: synthetic
+category: window_boundary
+description: Offline rolling window closed='left'; online closed='both'.
+expected_divergences:
+- category: window_boundary
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

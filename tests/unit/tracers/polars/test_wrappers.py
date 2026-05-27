@@ -15,7 +15,8 @@ import pytest
 
 from mirrorml import diff, trace_pandas, trace_polars, trace_sql
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source
+from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source, Window
+from mirrorml.fingerprint.schema import Fingerprint
 
 EVENTS = (("uid", "int64"), ("score", "float64"))
 EVENTS3 = (("uid", "int64"), ("country", "utf8"), ("score", "float64"))
@@ -359,6 +360,95 @@ def test_sort_with_pl_col() -> None:
 def test_sort_unknown_column_rejected() -> None:
     with pytest.raises(UnsupportedOperationError, match="bogus"):
         trace_polars(lambda lf, pl: lf.sort("bogus"), input_schema=EVENTS)
+
+
+# --- rolling (time windows -> Window op, window_boundary) -------------------
+
+TS_EVENTS = (("uid", "int64"), ("ts", "timestamp[ns, UTC]"), ("score", "float64"))
+
+
+def _rolling(closed: str = "right", period: str = "3d") -> Fingerprint:
+    return trace_polars(
+        lambda lf, pl: lf.rolling(
+            index_column="ts", period=period, closed=closed, group_by="uid"
+        ).agg(pl.col("score").mean()),
+        input_schema=TS_EVENTS,
+        source_name="events",
+    )
+
+
+def test_rolling_emits_window_op() -> None:
+    fp = trace_polars(
+        lambda lf, pl: lf.rolling(index_column="ts", period="3d", group_by="uid").agg(
+            pl.col("score").mean()
+        ),
+        input_schema=TS_EVENTS,
+    )
+    assert [op.kind for op in fp.operations] == ["source", "window"]
+    win = fp.operations[1]
+    assert isinstance(win, Window)
+    assert win.over == ("uid",)
+    assert win.order_by == ("ts",)
+    assert win.size == "3d"
+    assert win.temporal.closed == "right"
+    assert win.aggregations == (("score", "score", "mean"),)
+    assert fp.output_schema == TS_EVENTS
+
+
+def test_rolling_closed_none_maps_to_neither() -> None:
+    fp = trace_polars(
+        lambda lf, pl: lf.rolling(
+            index_column="ts", period="3d", closed="none", group_by="uid"
+        ).agg(pl.col("score").mean()),
+        input_schema=TS_EVENTS,
+    )
+    win = fp.operations[1]
+    assert isinstance(win, Window)
+    assert win.temporal.closed == "neither"
+
+
+def test_identical_rolling_windows_diff_to_empty() -> None:
+    assert diff(_rolling("left"), _rolling("left")) == ()
+
+
+def test_different_rolling_boundary_surfaces_window_boundary() -> None:
+    divs = diff(_rolling("left"), _rolling("right"))
+    assert [d.category for d in divs] == ["window_boundary"]
+
+
+def test_different_rolling_period_surfaces_window_size_mismatch() -> None:
+    divs = diff(_rolling(period="3d"), _rolling(period="7d"))
+    assert [d.category for d in divs] == ["window_size_mismatch"]
+
+
+def test_rolling_offset_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="offset"):
+        trace_polars(
+            lambda lf, pl: lf.rolling(
+                index_column="ts", period="3d", offset="1d", group_by="uid"
+            ).agg(pl.col("score").mean()),
+            input_schema=TS_EVENTS,
+        )
+
+
+def test_rolling_bad_closed_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="closed"):
+        trace_polars(
+            lambda lf, pl: lf.rolling(
+                index_column="ts", period="3d", closed="sideways", group_by="uid"
+            ).agg(pl.col("score").mean()),
+            input_schema=TS_EVENTS,
+        )
+
+
+def test_rolling_unknown_index_column_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="bogus"):
+        trace_polars(
+            lambda lf, pl: lf.rolling(index_column="bogus", period="3d").agg(
+                pl.col("score").mean()
+            ),
+            input_schema=TS_EVENTS,
+        )
 
 
 # --- cross-framework equivalence (PAPER.md C4, third framework) -------------

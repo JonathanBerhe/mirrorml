@@ -312,6 +312,72 @@ def _window_function_pairs() -> Iterable[dict[str, Any]]:
     }
 
 
+def _rolling_window_polars_src(closed: str, function: str) -> str:
+    """A Polars time-based rolling-mean pipeline with an explicit closed
+    boundary (the field that makes window_boundary detectable)."""
+
+    return (
+        f"def {function}(lf, pl):\n"
+        f"    return lf.rolling(index_column='ts', period='3d', closed='{closed}', "
+        f"group_by='uid').agg(pl.col('score').mean())\n"
+    )
+
+
+def _window_boundary_pairs() -> Iterable[dict[str, Any]]:
+    """Polars rolling-window pairs that differ only in the ``closed``
+    boundary. These activate ``window_boundary`` (time windows separate the
+    boundary from the size cleanly, unlike SQL ROWS frames)."""
+
+    schema = [("uid", "int64"), ("ts", "timestamp[ns, UTC]"), ("score", "float64")]
+
+    yield {
+        "name": "identity_rolling_window",
+        "category": "identity",
+        "description": "Same 3-day rolling mean (closed=right) on both sides; diff empty.",
+        "offline": {
+            "language": "polars",
+            "python_source": _rolling_window_polars_src("right", "offline"),
+            "function": "offline",
+            "input_schema": schema,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": _rolling_window_polars_src("right", "online"),
+            "function": "online",
+            "input_schema": schema,
+            "source_name": "events",
+        },
+        "expected_divergences": [],
+    }
+
+    # closed values use Polars's own vocabulary (left/right/both/none); the
+    # tracer maps "none" -> our canonical "neither".
+    for i, (off_c, on_c) in enumerate(
+        [("left", "right"), ("both", "none"), ("left", "both"), ("right", "none")]
+    ):
+        yield {
+            "name": f"window_boundary_{i:03d}",
+            "category": "window_boundary",
+            "description": f"Offline rolling window closed={off_c!r}; online closed={on_c!r}.",
+            "offline": {
+                "language": "polars",
+                "python_source": _rolling_window_polars_src(off_c, "offline"),
+                "function": "offline",
+                "input_schema": schema,
+                "source_name": "events",
+            },
+            "online": {
+                "language": "polars",
+                "python_source": _rolling_window_polars_src(on_c, "online"),
+                "function": "online",
+                "input_schema": schema,
+                "source_name": "events",
+            },
+            "expected_divergences": [{"category": "window_boundary"}],
+        }
+
+
 def _identity_pairs() -> Iterable[dict[str, Any]]:
     """Negative-control pairs: structurally equivalent pipelines that
     must diff to ``()``. These are essential for precision; without
@@ -367,6 +433,7 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _join_key_mismatch_pairs()
     yield from _ordering_dependence_pairs()
     yield from _window_function_pairs()
+    yield from _window_boundary_pairs()
     yield from _cross_framework_identity_pairs()
     yield from _cross_framework_divergence_pairs()
     yield from _cross_framework_polars_pairs()
