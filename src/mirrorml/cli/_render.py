@@ -150,3 +150,47 @@ def render_verify_result(
         )
 
     return passed
+
+
+def render_verify_compact(
+    console: Console,
+    *,
+    pair_name: str,
+    bucket: str,
+    category: str,
+    expected: Iterable[str],
+    predicted: Iterable[Divergence],
+) -> bool:
+    """One PASS/FAIL line for a pair, used when verifying many pairs at
+    once. On failure the extra / missing categories are appended so the
+    run stays actionable without re-verifying each pair individually."""
+
+    expected_set = set(expected)
+    predicted_set = {d.category for d in predicted}
+    extras = sorted(predicted_set - expected_set)
+    missing = sorted(expected_set - predicted_set)
+    passed = not extras and not missing
+
+    line = Text()
+    line.append_text(Text("PASS", style="bold green") if passed else Text("FAIL", style="bold red"))
+    line.append(f"  {pair_name}  ", style="bold")
+    line.append(f"({bucket} / {category})", style="dim")
+    if extras:
+        line.append(f"  extra={', '.join(extras)}", style="red")
+    if missing:
+        line.append(f"  missing={', '.join(missing)}", style="red")
+    console.print(line)
+    return passed
+
+
+def render_verify_summary(console: Console, *, total: int, passed: int) -> None:
+    """Final tally line for a multi-pair verify run."""
+
+    failed = total - passed
+    line = Text(
+        f"{passed}/{total} pairs passed",
+        style="bold green" if failed == 0 else "bold red",
+    )
+    if failed:
+        line.append(f"  ({failed} failed)", style="red")
+    console.print(line)

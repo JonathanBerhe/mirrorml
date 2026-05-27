@@ -249,6 +249,54 @@ def test_verify_rejects_malformed_pair(tmp_path: Path) -> None:
     assert result.exit_code == 2
 
 
+def test_verify_directory_of_pairs_all_pass(tmp_path: Path) -> None:
+    root = tmp_path / "pairs"
+    for name in ("a", "b"):
+        _write_sql_pair(
+            root / name,
+            name=name,
+            category="identity",
+            offline_sql="SELECT uid FROM t\n",
+            online_sql="SELECT uid FROM t\n",
+            schemas={"t": [("uid", "int64")]},
+            expected_divergences=[],
+        )
+
+    runner = _runner()
+    result = runner.invoke(app, ["verify", str(root)])
+    assert result.exit_code == 0, result.stdout
+    assert "2/2 pairs passed" in result.stdout
+
+
+def test_verify_directory_with_a_failing_pair(tmp_path: Path) -> None:
+    root = tmp_path / "pairs"
+    _write_sql_pair(
+        root / "good",
+        name="good",
+        category="identity",
+        offline_sql="SELECT uid FROM t\n",
+        online_sql="SELECT uid FROM t\n",
+        schemas={"t": [("uid", "int64")]},
+        expected_divergences=[],
+    )
+    # Diverges (sum vs avg) but declares no expected divergences -> FAIL.
+    _write_sql_pair(
+        root / "bad",
+        name="bad",
+        category="identity",
+        offline_sql="SELECT uid, SUM(score) AS score FROM t GROUP BY uid\n",
+        online_sql="SELECT uid, AVG(score) AS score FROM t GROUP BY uid\n",
+        schemas={"t": [("uid", "int64"), ("score", "float64")]},
+        expected_divergences=[],
+    )
+
+    runner = _runner()
+    result = runner.invoke(app, ["verify", str(root)])
+    assert result.exit_code == 1
+    assert "FAIL" in result.stdout
+    assert "1/2 pairs passed" in result.stdout
+
+
 # --- top-level ---------------------------------------------------------------
 
 

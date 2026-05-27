@@ -22,8 +22,13 @@ import typer
 from rich.console import Console
 
 from mirrorml import __version__, diff
-from mirrorml.cli._pair import load_pair
-from mirrorml.cli._render import render_divergences, render_verify_result
+from mirrorml.cli._pair import discover_pairs, load_pair
+from mirrorml.cli._render import (
+    render_divergences,
+    render_verify_compact,
+    render_verify_result,
+    render_verify_summary,
+)
 from mirrorml.fingerprint.schema import Fingerprint
 
 
@@ -158,39 +163,58 @@ app.command(name="diff")(diff_command)
 
 @app.command()
 def verify(
-    pair_dir: Path = typer.Argument(
+    path: Path = typer.Argument(
         ...,
         exists=True,
         file_okay=False,
         dir_okay=True,
         readable=True,
-        help="Path to a pair directory containing a meta.yaml.",
+        help="A pair directory (with meta.yaml), or a directory of pairs to verify recursively.",
     ),
 ) -> None:
-    """Trace both sides of a pair, diff, and check against expected_divergences.
+    """Trace both sides of each pair, diff, and check against expected_divergences.
 
-    Exits 0 iff the predicted divergence categories match the
-    ``expected_divergences`` set in ``meta.yaml`` exactly. Extras and
-    misses both fail.
+    If PATH is a single pair (it contains a ``meta.yaml``) only that pair is
+    checked, with full divergence detail. Otherwise every pair found beneath
+    PATH is checked with a one-line result each plus a summary. Exits 0 iff
+    every pair's predicted divergence categories match its expected set
+    exactly; extras and misses both fail.
     """
 
-    try:
-        pair = load_pair(pair_dir)
-    except ValueError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(2) from None
-
-    divergences = diff(pair.offline, pair.online)
     console = Console()
-    passed = render_verify_result(
-        console,
-        pair_name=pair.name,
-        bucket=pair.bucket,
-        category=pair.category,
-        expected=(e.category for e in pair.expected),
-        predicted=divergences,
-    )
-    raise typer.Exit(0 if passed else 1)
+
+    if (path / "meta.yaml").is_file():
+        pair_dirs = [path]
+    else:
+        pair_dirs = discover_pairs(path)
+        if not pair_dirs:
+            typer.echo(f"error: no pairs (meta.yaml) found under {path}", err=True)
+            raise typer.Exit(2) from None
+
+    single = len(pair_dirs) == 1
+    passed_count = 0
+    for pair_dir in pair_dirs:
+        try:
+            pair = load_pair(pair_dir)
+        except ValueError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(2) from None
+
+        divergences = diff(pair.offline, pair.online)
+        render = render_verify_result if single else render_verify_compact
+        if render(
+            console,
+            pair_name=pair.name,
+            bucket=pair.bucket,
+            category=pair.category,
+            expected=(e.category for e in pair.expected),
+            predicted=divergences,
+        ):
+            passed_count += 1
+
+    if not single:
+        render_verify_summary(console, total=len(pair_dirs), passed=passed_count)
+    raise typer.Exit(0 if passed_count == len(pair_dirs) else 1)
 
 
 if __name__ == "__main__":  # pragma: no cover
