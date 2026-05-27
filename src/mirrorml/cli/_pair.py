@@ -81,6 +81,18 @@ class Pair:
     online: Fingerprint
     expected: tuple[ExpectedDivergence, ...]
     path: Path
+    source_url: str | None = None
+    postmortem_url: str | None = None
+
+
+# Provenance required per bucket: a real_world pair must cite the public
+# source it was mined from, a replayed_bugs pair the public postmortem it
+# reconstructs. This guards the benchmark's credibility (an unsourced
+# "real" pair is worse than none).
+_REQUIRED_PROVENANCE: dict[str, str] = {
+    "real_world": "source_url",
+    "replayed_bugs": "postmortem_url",
+}
 
 
 def load_pair(pair_dir: Path) -> Pair:
@@ -102,6 +114,14 @@ def load_pair(pair_dir: Path) -> Pair:
         if required not in meta:
             raise ValueError(f"pair {pair_dir}: meta.yaml missing required field {required!r}")
 
+    bucket = str(meta["bucket"])
+    provenance_field = _REQUIRED_PROVENANCE.get(bucket)
+    if provenance_field is not None and not meta.get(provenance_field):
+        raise ValueError(
+            f"pair {pair_dir}: {bucket!r} pairs must declare a non-empty "
+            f"{provenance_field!r} in meta.yaml"
+        )
+
     offline_fp = _trace_side(pair_dir, meta["offline"], side_label="offline")
     online_fp = _trace_side(pair_dir, meta["online"], side_label="online")
 
@@ -114,15 +134,20 @@ def load_pair(pair_dir: Path) -> Pair:
         for e in expected_raw
     )
 
+    source_url = meta.get("source_url")
+    postmortem_url = meta.get("postmortem_url")
+
     return Pair(
         name=str(meta["name"]),
-        bucket=str(meta["bucket"]),
+        bucket=bucket,
         category=str(meta["category"]),
         description=str(meta.get("description", "")).strip(),
         offline=offline_fp,
         online=online_fp,
         expected=expected,
         path=pair_dir,
+        source_url=str(source_url) if source_url else None,
+        postmortem_url=str(postmortem_url) if postmortem_url else None,
     )
 
 

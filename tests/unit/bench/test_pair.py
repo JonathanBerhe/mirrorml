@@ -20,11 +20,12 @@ def _write_pair(
     online_schemas: dict[str, list[tuple[str, str]]],
     expected_divergences: list[dict[str, str]],
     bucket: str = "synthetic",
+    extra_meta: dict[str, object] | None = None,
 ) -> None:
     target.mkdir(parents=True)
     (target / "offline.sql").write_text(offline_sql)
     (target / "online.sql").write_text(online_sql)
-    meta = {
+    meta: dict[str, object] = {
         "name": name,
         "bucket": bucket,
         "category": category,
@@ -41,8 +42,73 @@ def _write_pair(
             "schemas": {t: [list(c) for c in cols] for t, cols in online_schemas.items()},
         },
     }
+    if extra_meta:
+        meta.update(extra_meta)
     with (target / "meta.yaml").open("w") as f:
         yaml.safe_dump(meta, f, sort_keys=False)
+
+
+def _kwargs(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "name": "p",
+        "category": "identity",
+        "offline_sql": "SELECT uid FROM t\n",
+        "online_sql": "SELECT uid FROM t\n",
+        "offline_schemas": {"t": [("uid", "int64")]},
+        "online_schemas": {"t": [("uid", "int64")]},
+        "expected_divergences": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_real_world_pair_without_source_url_is_rejected(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "rw"
+    _write_pair(pair_dir, bucket="real_world", **_kwargs())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="source_url"):
+        load_pair(pair_dir)
+
+
+def test_real_world_pair_with_source_url_loads(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "rw"
+    url = "https://github.com/example/repo/blob/main/features.py"
+    _write_pair(
+        pair_dir,
+        bucket="real_world",
+        extra_meta={"source_url": url},
+        **_kwargs(),  # type: ignore[arg-type]
+    )
+    pair = load_pair(pair_dir)
+    assert pair.bucket == "real_world"
+    assert pair.source_url == url
+
+
+def test_replayed_bug_without_postmortem_url_is_rejected(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "rb"
+    _write_pair(pair_dir, bucket="replayed_bugs", **_kwargs())  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="postmortem_url"):
+        load_pair(pair_dir)
+
+
+def test_replayed_bug_with_postmortem_url_loads(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "rb"
+    url = "https://engineering.example.com/postmortem/skew-2021"
+    _write_pair(
+        pair_dir,
+        bucket="replayed_bugs",
+        extra_meta={"postmortem_url": url},
+        **_kwargs(),  # type: ignore[arg-type]
+    )
+    pair = load_pair(pair_dir)
+    assert pair.postmortem_url == url
+
+
+def test_synthetic_pair_needs_no_provenance(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "syn"
+    _write_pair(pair_dir, bucket="synthetic", **_kwargs())  # type: ignore[arg-type]
+    pair = load_pair(pair_dir)
+    assert pair.source_url is None
+    assert pair.postmortem_url is None
 
 
 def test_load_pair_round_trips_simple_sql_pair(tmp_path: Path) -> None:
