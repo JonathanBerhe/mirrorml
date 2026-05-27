@@ -370,6 +370,7 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _cross_framework_identity_pairs()
     yield from _cross_framework_divergence_pairs()
     yield from _cross_framework_polars_pairs()
+    yield from _cross_framework_sort_pairs()
     yield from _adversarial_predicate_pairs()
     yield from _adversarial_structure_pairs()
     yield from _adversarial_cosmetic_pairs()
@@ -592,6 +593,57 @@ def _cross_framework_divergence_pairs() -> Iterable[dict[str, Any]]:
             "schemas": {"events": events_pt},
         },
         "expected_divergences": [{"category": "timezone_mismatch"}],
+    }
+
+
+def _cross_framework_sort_pairs() -> Iterable[dict[str, Any]]:
+    """Sort pairs exercising the wrapper tracers' new sort support. The
+    identity pair (Polars vs pandas, same sort) must diff to ``()``; the
+    direction pair (pandas DESC vs SQL ASC) must surface
+    ``ordering_dependence``."""
+
+    events = [("uid", "int64"), ("score", "float64")]
+
+    yield {
+        "name": "cross_framework_identity_sort_polars_vs_pandas",
+        "category": "identity",
+        "description": "polars lf.sort('score') vs pandas df.sort_values('score'); diff empty.",
+        "offline": {
+            "language": "polars",
+            "python_source": "def offline(lf, pl):\n    return lf.sort('score')\n",
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "pandas",
+            "python_source": "def online(df):\n    return df.sort_values('score')\n",
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [],
+    }
+
+    yield {
+        "name": "cross_framework_sort_direction_pandas_vs_sql",
+        "category": "ordering_dependence",
+        "description": "pandas sorts score DESC; SQL sorts score ASC.",
+        "offline": {
+            "language": "pandas",
+            "python_source": (
+                "def offline(df):\n    return df.sort_values('score', ascending=False)\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "sql",
+            "sql": "SELECT * FROM events ORDER BY score\n",
+            "schemas": {"events": events},
+        },
+        "expected_divergences": [{"category": "ordering_dependence"}],
     }
 
 

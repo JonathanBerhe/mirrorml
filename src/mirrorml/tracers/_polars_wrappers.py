@@ -26,7 +26,7 @@ sorts, and window functions land in later phases.
 from __future__ import annotations
 
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Source
+from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source
 from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta
 from mirrorml.tracers._trace_common import (
     TracePredicate,
@@ -34,6 +34,7 @@ from mirrorml.tracers._trace_common import (
     next_op_index,
     render_literal,
     resolve_agg_func,
+    sort_directions,
 )
 
 # Polars reduction-method names -> canonical reduction names. The canonical
@@ -395,6 +396,58 @@ class _TraceLazyFrame:
     def groupby(self, *by: object) -> _TraceGroupBy:
         """Alias for :meth:`group_by` (Polars < 0.20 spelling)."""
         return self.group_by(*by)
+
+    def sort(self, by: object, *more_by: object, descending: object = False) -> _TraceLazyFrame:
+        """Emit a :class:`Sort` op. ``by`` (plus any ``*more_by``) are column
+        names or ``pl.col(...)`` expressions; ``descending`` is a bool or a
+        per-column list of bools (Polars semantics). Output schema is
+        unchanged."""
+
+        names: list[str] = []
+        for key in _flatten((by, *more_by)):
+            if isinstance(key, str):
+                names.append(key)
+            elif isinstance(key, _TraceColExpr):
+                names.append(key.input_name)
+            else:
+                raise UnsupportedOperationError(
+                    f"polars tracer: sort key must be a column name or pl.col(...); "
+                    f"got {type(key).__name__}"
+                )
+        for name in names:
+            if name not in self._schema:
+                raise UnsupportedOperationError(
+                    f"polars tracer: sort column {name!r} not in frame. "
+                    f"Available: {sorted(self._schema)}"
+                )
+
+        if isinstance(descending, bool):
+            ascending_flags = [not descending] * len(names)
+        elif isinstance(descending, list):
+            if len(descending) != len(names):
+                raise UnsupportedOperationError(
+                    "polars tracer: sort descending list length must match the key count"
+                )
+            if not all(isinstance(d, bool) for d in descending):
+                raise UnsupportedOperationError(
+                    "polars tracer: sort descending list must contain bools"
+                )
+            ascending_flags = [not d for d in descending]
+        else:
+            raise UnsupportedOperationError(
+                f"polars tracer: sort descending must be a bool or list of bools; "
+                f"got {type(descending).__name__}"
+            )
+
+        op_id = f"sort_{next_op_index(self._operations)}"
+        self._operations.append(
+            Sort(
+                op_id=op_id,
+                dependencies=(self._last_op_id,),
+                by=sort_directions(names, ascending_flags),
+            )
+        )
+        return self._derive(dict(self._schema), op_id)
 
 
 class _TraceGroupBy:

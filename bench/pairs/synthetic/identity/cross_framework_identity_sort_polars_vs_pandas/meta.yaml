@@ -1,0 +1,28 @@
+name: cross_framework_identity_sort_polars_vs_pandas
+bucket: synthetic
+category: identity
+description: polars lf.sort('score') vs pandas df.sort_values('score'); diff empty.
+expected_divergences: []
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: pandas
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

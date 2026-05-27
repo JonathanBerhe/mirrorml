@@ -1,0 +1,28 @@
+name: cross_framework_sort_direction_pandas_vs_sql
+bucket: synthetic
+category: ordering_dependence
+description: pandas sorts score DESC; SQL sorts score ASC.
+expected_divergences:
+- category: ordering_dependence
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

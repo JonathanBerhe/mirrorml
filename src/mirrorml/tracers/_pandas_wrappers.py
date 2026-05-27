@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Source
+from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source
 from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta
 from mirrorml.tracers._trace_common import (
     TracePredicate,
@@ -36,6 +36,7 @@ from mirrorml.tracers._trace_common import (
     next_op_index,
     render_literal,
     resolve_agg_func,
+    sort_directions,
 )
 
 # Maps pandas-side agg names to canonical reduction names. The SQL tracer
@@ -275,6 +276,68 @@ class _TraceFrame:
             operations=self._operations,
             last_op_id=op_id,
         )
+
+    def sort_values(self, by: object, ascending: object = True) -> _TraceFrame:
+        """Emit a :class:`Sort` op. ``by`` is a column name or list of names;
+        ``ascending`` is a bool or a per-column list of bools (pandas
+        semantics). The output schema is unchanged."""
+
+        keys = _as_column_list(by, what="sort_values by")
+        for key in keys:
+            if key not in self._schema:
+                raise UnsupportedOperationError(
+                    f"pandas tracer: sort_values column {key!r} not in frame. "
+                    f"Available: {sorted(self._schema)}"
+                )
+
+        if isinstance(ascending, bool):
+            flags = [ascending] * len(keys)
+        elif isinstance(ascending, list):
+            if len(ascending) != len(keys):
+                raise UnsupportedOperationError(
+                    "pandas tracer: sort_values ascending list length must match by"
+                )
+            if not all(isinstance(a, bool) for a in ascending):
+                raise UnsupportedOperationError(
+                    "pandas tracer: sort_values ascending list must contain bools"
+                )
+            flags = ascending
+        else:
+            raise UnsupportedOperationError(
+                f"pandas tracer: sort_values ascending must be a bool or list of "
+                f"bools; got {type(ascending).__name__}"
+            )
+
+        op_id = f"sort_{next_op_index(self._operations)}"
+        self._operations.append(
+            Sort(
+                op_id=op_id,
+                dependencies=(self._last_op_id,),
+                by=sort_directions(keys, flags),
+            )
+        )
+        return _TraceFrame(
+            schema=dict(self._schema),
+            operations=self._operations,
+            last_op_id=op_id,
+        )
+
+
+def _as_column_list(value: object, *, what: str) -> list[str]:
+    """Normalize a column-or-list argument to a list of column-name strings."""
+
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        for item in value:
+            if not isinstance(item, str):
+                raise UnsupportedOperationError(
+                    f"pandas tracer: {what} must contain strings; got {type(item).__name__}"
+                )
+        return list(value)
+    raise UnsupportedOperationError(
+        f"pandas tracer: {what} must be a column name or list of names; got {type(value).__name__}"
+    )
 
 
 class _TraceGroupBy:

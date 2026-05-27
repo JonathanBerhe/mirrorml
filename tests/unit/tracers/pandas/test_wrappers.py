@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import pytest
 
-from mirrorml import diff, trace_pandas, trace_sql
+from mirrorml import diff, trace_pandas, trace_polars, trace_sql
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Filter, Project, Source
+from mirrorml.fingerprint.operations import Filter, Project, Sort, Source
 
 EVENTS = (("uid", "int64"), ("score", "float64"))
 
@@ -209,6 +209,62 @@ def test_unknown_column_in_filter_rejected() -> None:
             lambda df: df[df["bogus"] > 0],
             input_schema=EVENTS,
         )
+
+
+# --- sort_values ------------------------------------------------------------
+
+
+def test_sort_values_single_column_ascending() -> None:
+    fp = trace_pandas(lambda df: df.sort_values("score"), input_schema=EVENTS)
+    assert [op.kind for op in fp.operations] == ["source", "sort"]
+    srt = fp.operations[1]
+    assert isinstance(srt, Sort)
+    assert srt.by == (("score", "asc"),)
+    assert fp.output_schema == EVENTS
+
+
+def test_sort_values_descending() -> None:
+    fp = trace_pandas(lambda df: df.sort_values("score", ascending=False), input_schema=EVENTS)
+    srt = fp.operations[1]
+    assert isinstance(srt, Sort)
+    assert srt.by == (("score", "desc"),)
+
+
+def test_sort_values_multi_column_mixed_direction() -> None:
+    fp = trace_pandas(
+        lambda df: df.sort_values(["uid", "score"], ascending=[True, False]),
+        input_schema=EVENTS,
+    )
+    srt = fp.operations[1]
+    assert isinstance(srt, Sort)
+    assert srt.by == (("uid", "asc"), ("score", "desc"))
+
+
+def test_sort_values_unknown_column_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="bogus"):
+        trace_pandas(lambda df: df.sort_values("bogus"), input_schema=EVENTS)
+
+
+def test_sort_values_ascending_length_mismatch_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="length"):
+        trace_pandas(
+            lambda df: df.sort_values(["uid", "score"], ascending=[True]),
+            input_schema=EVENTS,
+        )
+
+
+def test_cross_framework_sort_pandas_vs_polars_diffs_to_empty() -> None:
+    pandas_fp = trace_pandas(
+        lambda df: df.sort_values("score", ascending=False),
+        input_schema=EVENTS,
+        source_name="events",
+    )
+    polars_fp = trace_polars(
+        lambda lf, pl: lf.sort("score", descending=True),
+        input_schema=EVENTS,
+        source_name="events",
+    )
+    assert diff(pandas_fp, polars_fp) == ()
 
 
 # --- THE BIG ONE: cross-framework equivalence (PAPER.md C4) -----------------

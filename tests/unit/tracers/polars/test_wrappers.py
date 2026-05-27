@@ -15,7 +15,7 @@ import pytest
 
 from mirrorml import diff, trace_pandas, trace_polars, trace_sql
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Source
+from mirrorml.fingerprint.operations import Aggregate, Filter, Project, Sort, Source
 
 EVENTS = (("uid", "int64"), ("score", "float64"))
 EVENTS3 = (("uid", "int64"), ("country", "utf8"), ("score", "float64"))
@@ -312,6 +312,53 @@ def test_pl_col_multi_column_rejected() -> None:
             lambda lf, pl: lf.select(pl.col("uid", "score")),
             input_schema=EVENTS,
         )
+
+
+# --- sort -------------------------------------------------------------------
+
+
+def test_sort_single_column_ascending() -> None:
+    fp = trace_polars(lambda lf, pl: lf.sort("score"), input_schema=EVENTS)
+    assert [op.kind for op in fp.operations] == ["source", "sort"]
+    srt = fp.operations[1]
+    assert isinstance(srt, Sort)
+    assert srt.by == (("score", "asc"),)
+
+
+def test_sort_descending() -> None:
+    fp = trace_polars(lambda lf, pl: lf.sort("score", descending=True), input_schema=EVENTS)
+    srt = fp.operations[1]
+    assert isinstance(srt, Sort)
+    assert srt.by == (("score", "desc"),)
+
+
+def test_sort_multiple_columns_varargs() -> None:
+    fp = trace_polars(lambda lf, pl: lf.sort("uid", "score"), input_schema=EVENTS3)
+    srt = fp.operations[1]
+    assert isinstance(srt, Sort)
+    assert srt.by == (("uid", "asc"), ("score", "asc"))
+
+
+def test_sort_multi_column_mixed_direction() -> None:
+    fp = trace_polars(
+        lambda lf, pl: lf.sort(["uid", "score"], descending=[False, True]),
+        input_schema=EVENTS,
+    )
+    srt = fp.operations[1]
+    assert isinstance(srt, Sort)
+    assert srt.by == (("uid", "asc"), ("score", "desc"))
+
+
+def test_sort_with_pl_col() -> None:
+    fp = trace_polars(lambda lf, pl: lf.sort(pl.col("score"), descending=True), input_schema=EVENTS)
+    srt = fp.operations[1]
+    assert isinstance(srt, Sort)
+    assert srt.by == (("score", "desc"),)
+
+
+def test_sort_unknown_column_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="bogus"):
+        trace_polars(lambda lf, pl: lf.sort("bogus"), input_schema=EVENTS)
 
 
 # --- cross-framework equivalence (PAPER.md C4, third framework) -------------

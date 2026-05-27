@@ -17,7 +17,8 @@ Predicate strings follow SQL form: ``=``, ``<>``, ``AND``, ``OR``,
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from typing import Literal
 
 from mirrorml.exceptions import UnsupportedOperationError
 from mirrorml.fingerprint.schema import Operation
@@ -126,3 +127,20 @@ def aggregation_output_dtype(
     if input_col is None:
         raise UnsupportedOperationError(f"aggregation {func!r} has no input column")
     return source_dtypes[input_col]
+
+
+def sort_directions(
+    keys: Sequence[str], ascending_flags: Sequence[bool]
+) -> tuple[tuple[str, Literal["asc", "desc"]], ...]:
+    """Build a ``Sort.by`` tuple from columns + per-column ascending flags.
+
+    Centralizes the ``Literal["asc", "desc"]`` construction so the pandas
+    (``ascending=``) and Polars (``descending=``) wrappers, which use
+    opposite-polarity flags, produce identical ``Sort`` ops for an
+    equivalent sort (and match the SQL tracer's ORDER BY rendering)."""
+
+    out: list[tuple[str, Literal["asc", "desc"]]] = []
+    for key, ascending in zip(keys, ascending_flags, strict=True):
+        direction: Literal["asc", "desc"] = "asc" if ascending else "desc"
+        out.append((key, direction))
+    return tuple(out)
