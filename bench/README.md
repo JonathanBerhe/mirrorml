@@ -4,10 +4,11 @@ MirrorBench is the benchmark MirrorML is evaluated against. It is in-repo,
 checked in, and version-controlled with the library so any release can be
 re-evaluated against the same artifacts.
 
-**Phase 1 is live (M4 phase 1):** the synthetic bucket has 26 pairs covering
-the seven divergence categories the diff engine currently detects, the
-evaluator runs end-to-end, and the headline numbers are written to
-`bench/results/synthetic.json` (also checked in until CI takes over).
+**The synthetic bucket is live:** it has 60 pairs spanning the divergence
+categories the diff engine currently detects (11 of the 15) across all three
+frameworks (pandas, Polars, SQL), the evaluator runs end-to-end, and the
+headline numbers are written to `bench/results/synthetic.json` (a generated
+artifact, not tracked).
 
 ```shell
 # Regenerate every synthetic pair from the deterministic generator.
@@ -19,8 +20,9 @@ uv run python -m bench.scripts.run_eval
 uv run python -m bench.scripts.run_eval --quick
 ```
 
-The real-world and replayed-bug buckets are empty pending M4 phase 2
-(mining + reconstruction). The scaffolding for those is in place.
+The real-world and replayed-bug buckets are empty pending mining and
+reconstruction. The loader and evaluator already handle them transparently;
+they just need pairs.
 
 ## Composition
 
@@ -33,8 +35,8 @@ matters because each bucket measures something different about the system.
 | `pairs/real_world/` | Mined from public repositories | Realism of the operations MirrorML must handle |
 | `pairs/replayed_bugs/` | Reconstructed from public postmortems | Bug-recovery rate on incidents that actually shipped |
 
-**Synthetic pairs** must be programmatically generated — do not hand-author
-them. The generator's seed is stored in the pair's `meta.yaml` so any pair
+**Synthetic pairs** must be programmatically generated; do not hand-author
+them. The generator version is stored in the pair's `meta.yaml` so any pair
 is reproducible from the generator alone.
 
 **Real-world pairs** must include a `source_url` in `meta.yaml` pointing to
@@ -57,9 +59,11 @@ pairs/<bucket>/<pair-name>/
 ```
 
 `offline.*` and `online.*` may be `.py` (pandas / Polars) or `.sql`. Mixed
-pairs (e.g. `offline.py` + `online.sql`) test cross-framework equivalence
-— the most valuable kind for the headline claim. Fixtures must be small
-(< 1 MB) so the repo stays git-friendly; large fixtures move to Git LFS.
+pairs (e.g. `offline.py` + `online.sql`) test cross-framework equivalence,
+the most valuable kind for the headline claim. The `fixture.parquet` is
+optional today (it feeds the planned statistical companion check); when
+present it must be small (< 1 MB) so the repo stays git-friendly, with
+larger fixtures moving to Git LFS.
 
 ## `meta.yaml` schema (M4 phase 1)
 
@@ -72,7 +76,7 @@ description: >
 expected_divergences:              # the categories the diff engine MUST emit
   - category: timezone_mismatch
 offline:                           # the offline ("training") pipeline
-  language: sql                    # sql | pandas (pandas: M4 phase 2)
+  language: sql                    # sql | pandas | polars
   source: offline.sql              # filename relative to pair dir
   schemas:                         # required for SQL pairs
     events:
@@ -99,23 +103,24 @@ where `expected_divergences` is empty. Identity pairs measure precision
 The harness produces, in priority order:
 
 1. **Precision** (target ≥ 0.95). False alarms kill adoption.
-2. **Real-world bug recovery rate** — *the* quotable number for the paper.
+2. **Real-world bug recovery rate**, *the* quotable number for the paper.
 3. **Recall** (target ≥ 0.80 synthetic, ≥ 0.60 real-world).
 4. **Localization top-1 accuracy** (target ≥ 0.75).
 5. **p95 fingerprint latency** for 20-op pipelines (target < 500 ms).
 
-Numbers are written to `bench/results/*.json`. Phase 1 commits these
-results to the repo so the headline numbers are visible at every commit;
-once CI is wired up the results may move out of the tracked tree.
+Numbers are written to `bench/results/*.json` (a generated, untracked
+artifact) and CI enforces precision / recall gates on every PR. Latency is
+measured separately by `bench/scripts/latency.py`.
 
 ## Adding pairs
 
 1. Open an issue describing the divergence you want to capture (which
    category, why it's worth adding).
-2. Add the pair directory with the four required files.
-3. Run `python scripts/validate_pair.py <path>` (lands in M4) to confirm
-   the layout, fixture columns, and `meta.yaml` schema.
+2. Add the pair directory with its `meta.yaml` and source files (synthetic
+   pairs are added via the generator, not by hand).
+3. Run `uv run python -m bench.scripts.run_eval --quick`; the loader rejects
+   malformed pairs with a message naming the pair.
 4. PR with a one-paragraph rationale.
 
-Never delete benchmark pairs without explicit approval — a shrinking
+Never delete benchmark pairs without explicit approval; a shrinking
 benchmark is a credibility move that's hard to undo.
