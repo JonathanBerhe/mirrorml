@@ -15,7 +15,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help=(
             "Regenerate golden fixture files in tests/golden/ instead of "
             "comparing against them. Use sparingly: golden updates require an "
-            "explicit PR rationale (CLAUDE.md § Tests)."
+            "explicit PR rationale."
         ),
     )
 

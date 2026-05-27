@@ -2,9 +2,9 @@
 
 The checked-in golden file is the canonical-JSON encoding of the simplest
 possible fingerprint (single :class:`~mirrorml.fingerprint.operations.Source`
-op). If this byte string ever changes — either because the schema changed,
-the canonicalizer changed, or the hash algorithm changed — this test fails
-loudly. Updates require an explicit PR rationale per CLAUDE.md § Tests.
+op). If this byte string ever changes (because the schema changed, the
+canonicalizer changed, or the hash algorithm changed), this test fails
+loudly. Updates require an explicit PR rationale.
 
 Regenerate locally with ``pytest --update-golden``.
 """

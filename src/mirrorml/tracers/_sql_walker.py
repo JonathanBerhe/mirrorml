@@ -691,7 +691,7 @@ def _build_window(
     trailing rows window (``ROWS BETWEEN {n|UNBOUNDED} PRECEDING AND CURRENT
     ROW``), and non-window items must be bare passthrough columns. Anything
     else raises :class:`UnsupportedOperationError` rather than risk a false
-    equivalence (CLAUDE.md: a missed divergence is worse than an explicit
+    equivalence (a missed divergence is worse than an explicit
     "unsupported").
     """
 

@@ -95,7 +95,7 @@ def test_projection_order_is_preserved() -> None:
 
 def test_dialect_does_not_change_fingerprint_for_equivalent_sql() -> None:
     """A query that parses identically under two dialects must produce the
-    same fingerprint. This is the canonical-form claim from PAPER.md C4."""
+    same fingerprint. This is the canonical-form claim."""
 
     base = "SELECT uid FROM events WHERE score > 0"
     fp_a = trace_sql(base, schemas={"events": EVENTS_SCHEMA}, dialect="postgres")

@@ -14,8 +14,7 @@ The structural-hash rewrite is what gives two semantically-equivalent
 pipelines (potentially produced by different tracers with different ``op_id``
 schemes) the same :class:`~mirrorml.fingerprint.schema.Fingerprint`.
 
-The set of commutativity rewrites is intentionally small in v1.0.0 (see
-``CLAUDE.md`` § Canonicalization rules and the plan's known-risks list).
+The set of commutativity rewrites is intentionally small in v1.0.0.
 Adding a rewrite changes :data:`~mirrorml.fingerprint.schema.SCHEMA_VERSION`.
 """
 

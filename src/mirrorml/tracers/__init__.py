@@ -6,7 +6,7 @@ the tracing harnesses they need (libcst-based source capture for pandas /
 Polars; sqlglot for SQL).
 
 Tracers must remain lazy with respect to their target frameworks: importing
-this package must not import pandas or polars eagerly (CLAUDE.md's < 200ms
+this package must not import pandas or polars eagerly (the < 200ms
 import-time budget depends on it).
 """
 

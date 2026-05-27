@@ -12,7 +12,7 @@ Phase 1 scope mirrors the pandas tracer's phase 1a/1b: ``Source``,
 rendering is shared with the pandas tracer (see
 :mod:`mirrorml.tracers._trace_common`) so a Polars pipeline and the
 equivalent pandas or SQL pipeline produce fingerprints that
-``diff() == ()`` (PAPER.md C4).
+``diff() == ()``.
 
 Unlike :func:`~mirrorml.tracers.trace_pandas`, the pipeline takes *two*
 arguments: the proxy frame and the ``pl`` namespace. Polars expressions

@@ -25,8 +25,8 @@ def test_taxonomy_tuple_matches_literal() -> None:
 
 
 def test_taxonomy_order_is_documented() -> None:
-    """The tuple's ordering is the documented order. Mirrors the spec layout
-    in CLAUDE.md so reviewers can scan it linearly."""
+    """The tuple's ordering is the documented order, so reviewers can scan
+    it linearly."""
 
     expected = (
         "window_boundary",

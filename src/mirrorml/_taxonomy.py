@@ -1,9 +1,9 @@
 """Divergence taxonomy — the closed set of fifteen categories. INTERNAL.
 
 Definitive prose definitions live in ``docs/concepts/divergence_taxonomy.md``.
-Adding a category requires (per ``CLAUDE.md``): a doc update, a classifier
-rule in ``diff/classify.py``, and at least five MirrorBench examples. Removing
-or renaming a category is a breaking change.
+Adding a category requires: a doc update, a classifier rule in
+``diff/classify.py``, and at least five MirrorBench examples. Removing or
+renaming a category is a breaking change.
 
 The :data:`DIVERGENCE_CATEGORIES` tuple is the runtime source of truth; the
 :data:`DivergenceCategory` ``TypeAlias`` is the static-typing mirror. A unit

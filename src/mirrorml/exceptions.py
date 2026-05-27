@@ -1,8 +1,7 @@
 """Custom exceptions raised by MirrorML's public API.
 
 All public-API errors derive from :class:`MirrorMLError`. Messages must be
-actionable in the form "X failed because Y, try Z" — see ``CLAUDE.md`` § Error
-handling.
+actionable in the form "X failed because Y, try Z".
 """
 
 from __future__ import annotations

@@ -14,8 +14,8 @@ classified by :func:`~mirrorml.diff.classify.classify_op_pair` exactly
 as in phase 1, so the per-kind taxonomy logic is unchanged.
 
 Cross-framework comparison (e.g. pandas fingerprint vs SQL fingerprint)
-is the intended use case from PAPER.md C4. The ``framework`` field is
-informational; differences there do not produce divergences.
+is the intended use case. The ``framework`` field is informational;
+differences there do not produce divergences.
 """
 
 from __future__ import annotations

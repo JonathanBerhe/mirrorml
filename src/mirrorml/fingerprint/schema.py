@@ -11,9 +11,9 @@ incompatible inputs fail loudly. Sequence fields are :class:`tuple` rather
 than :class:`list` to keep models hashable (diff alignment tables key on
 them).
 
-Schema changes are breaking by default per ``CLAUDE.md`` § The Fingerprint
-Schema. Every change must bump :data:`SCHEMA_VERSION` and add a registered
-path in :mod:`mirrorml.fingerprint.migrate`.
+Schema changes are breaking by default. Every change must bump
+:data:`SCHEMA_VERSION` and add a registered path in
+:mod:`mirrorml.fingerprint.migrate`.
 """
 
 from __future__ import annotations
@@ -83,9 +83,9 @@ class TemporalSemantics(BaseModel):
 class UdfRef(BaseModel):
     """Opaque reference to a user-defined function.
 
-    UDF bodies are treated as opaque per ``CLAUDE.md`` § Limits. The fields
-    here let diff classify "UDF body differs" or "UDF signature differs"
-    without claiming to understand semantics.
+    UDF bodies are treated as opaque. The fields here let diff classify
+    "UDF body differs" or "UDF signature differs" without claiming to
+    understand semantics.
 
     ``source_hash`` is SHA-256 over a normalized libcst rendering of the
     callable (whitespace, comments, and docstrings stripped). The

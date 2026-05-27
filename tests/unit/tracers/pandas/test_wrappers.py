@@ -1,6 +1,6 @@
 """M2.pandas phase 1a: wrapper-object tracer for the Source / Filter /
 Project surface. Includes the cross-framework diff test that demonstrates
-the equivalence claim in PAPER.md C4."""
+the cross-framework equivalence claim."""
 
 from __future__ import annotations
 
@@ -314,7 +314,7 @@ def test_cross_framework_fillna_pandas_vs_polars_diffs_to_empty() -> None:
     assert diff(pandas_fp, polars_fp) == ()
 
 
-# --- THE BIG ONE: cross-framework equivalence (PAPER.md C4) -----------------
+# --- THE BIG ONE: cross-framework equivalence -------------------------------
 
 
 def test_equivalent_pandas_and_sql_pipelines_diff_to_empty() -> None:

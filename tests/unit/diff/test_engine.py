@@ -271,8 +271,8 @@ def test_ordering_dependence_direction_change() -> None:
 
 def test_cross_framework_diff_does_not_flag_framework() -> None:
     """A pandas-traced fingerprint and a SQL-traced fingerprint differ in
-    the ``framework`` field but that is not itself a divergence (PAPER.md
-    C4 is the cross-framework equivalence claim)."""
+    the ``framework`` field but that is not itself a divergence (the
+    cross-framework equivalence claim)."""
 
     sql_fp = trace_sql("SELECT uid FROM events", schemas={"events": EVENTS})
     pandas_fp = build_fingerprint(

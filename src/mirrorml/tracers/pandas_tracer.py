@@ -14,8 +14,7 @@ inference from a runtime example DataFrame land in later phases.
 Predicate rendering follows SQL form (``=``, ``<>``, ``AND``, ``OR``,
 ``NOT (...)``) so a pandas Filter and the equivalent SQL Filter produce
 byte-identical predicate strings. This is what makes the cross-framework
-``diff(pandas_fp, sql_fp) == ()`` claim from PAPER.md C4 testable end
-to end.
+``diff(pandas_fp, sql_fp) == ()`` claim testable end to end.
 """
 
 from __future__ import annotations

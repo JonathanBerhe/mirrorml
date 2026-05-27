@@ -4,7 +4,7 @@ Both wrapper tracers render Filter predicates and Aggregate ops into the
 *same* canonical forms the SQL tracer uses, so an equivalent pandas /
 Polars pipeline and SQL query produce byte-identical ``Filter.predicate``
 strings and identical ``Aggregate`` ops. That byte-parity is the basis
-for the cross-framework ``diff(a, b) == ()`` claim (PAPER.md C4).
+for cross-framework equivalence (``diff(a, b) == ()``).
 
 Keeping the rendering here, shared, makes the parity *structural* rather
 than something maintained by hand in two places. The SQL tracer keeps its

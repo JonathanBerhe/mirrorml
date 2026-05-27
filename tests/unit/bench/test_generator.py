@@ -1,6 +1,6 @@
 """Tests for the synthetic-pair generator. The generator MUST be
-deterministic and reproducible (CLAUDE.md: synthetic pairs cannot be
-hand-authored; regenerating must produce identical output)."""
+deterministic and reproducible (synthetic pairs cannot be hand-authored;
+regenerating must produce identical output)."""
 
 from __future__ import annotations
 

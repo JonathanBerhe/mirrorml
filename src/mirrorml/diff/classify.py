@@ -173,8 +173,8 @@ def classify_op_pair(left: Operation, right: Operation) -> Iterator[Divergence]:
 
     Skips identical pairs. Dispatches on ``kind``; kinds without specific
     rules emit a fallback ``schema_drift`` divergence so the disagreement
-    is at least surfaced (per CLAUDE.md: false negatives are worse than
-    false positives that the user can suppress).
+    is at least surfaced (a missed divergence is worse than a false
+    positive the user can suppress).
     """
 
     if left == right:
@@ -242,8 +242,8 @@ def _classify_filter(left: Operation, right: Operation) -> Iterator[Divergence]:
     divergence that does not fit any single taxonomy category cleanly:
     if the predicate mentions ``NULL`` / ``IS NULL`` we map it to
     ``null_handling``; otherwise the predicate change is surfaced as a
-    ``schema_drift`` fallback so it cannot silently vanish (CLAUDE.md:
-    false negatives are worse than imperfect classifications)."""
+    ``schema_drift`` fallback so it cannot silently vanish (a missed
+    divergence is worse than an imperfect classification)."""
 
     assert left.kind == "filter" and right.kind == "filter"
     if left.predicate == right.predicate:

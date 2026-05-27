@@ -7,8 +7,7 @@ instances. Predicate and aggregation rendering is shared with the pandas
 tracer via :mod:`mirrorml.tracers._trace_common`, so an equivalent Polars
 and pandas / SQL pipeline produce byte-identical ``Filter.predicate``
 strings and identical ``Aggregate`` ops. That parity is what lets the
-diff engine return ``()`` for cross-framework equivalent pipelines
-(PAPER.md C4).
+diff engine return ``()`` for cross-framework equivalent pipelines.
 
 The pipeline is invoked as ``pipeline(frame, pl)`` where ``pl`` is a
 tracing namespace exposing ``col`` and ``lit``. Polars expressions are

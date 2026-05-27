@@ -29,8 +29,8 @@ def test_version_is_set() -> None:
 
 
 def test_pandas_and_polars_are_not_imported_eagerly() -> None:
-    """Tracers must stay lazy w.r.t. their target frameworks (CLAUDE.md
-    < 200ms import-time budget)."""
+    """Tracers must stay lazy w.r.t. their target frameworks (the < 200ms
+    import-time budget)."""
 
     import sys
 

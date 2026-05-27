@@ -193,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         metavar="P",
         help=(
             "Exit non-zero if any evaluated bucket's headline precision is "
-            "below P. CI uses this as a regression gate (CLAUDE.md target 0.95)."
+            "below P. CI uses this as a regression gate (target 0.95)."
         ),
     )
     parser.add_argument(
@@ -203,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         metavar="R",
         help=(
             "Exit non-zero if any evaluated bucket's headline recall is "
-            "below R. CI uses this as a regression gate (CLAUDE.md target 0.80)."
+            "below R. CI uses this as a regression gate (target 0.80)."
         ),
     )
     parser.add_argument(

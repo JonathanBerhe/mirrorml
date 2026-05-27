@@ -1,6 +1,6 @@
 """M2.polars phase 1: wrapper-object tracer for the Source / Filter /
 Project / Aggregate surface, plus the cross-framework diff tests that
-extend the PAPER.md C4 equivalence claim to a third framework.
+extend the cross-framework equivalence claim to a third framework.
 
 The tracer never imports the real ``polars`` package, so these tests do
 not require polars to be installed; the ``pl`` argument is the tracer's
@@ -562,7 +562,7 @@ def test_fill_null_value_difference_surfaces_null_handling() -> None:
     assert [d.category for d in divs] == ["null_handling"]
 
 
-# --- cross-framework equivalence (PAPER.md C4, third framework) -------------
+# --- cross-framework equivalence (third framework) --------------------------
 
 
 def test_polars_and_sql_identity_diff_to_empty() -> None:

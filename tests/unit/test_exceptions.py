@@ -1,5 +1,5 @@
 """All MirrorML exceptions descend from a single base; messages are
-actionable per CLAUDE.md § Error handling."""
+actionable in the form "X failed because Y, try Z"."""
 
 from __future__ import annotations
 

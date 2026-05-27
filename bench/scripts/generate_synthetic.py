@@ -1,7 +1,7 @@
 """Programmatic generator for synthetic MirrorBench pairs.
 
-Per ``CLAUDE.md``: synthetic pairs MUST be programmatically generated;
-hand-authoring is disallowed. This module is the single entry point.
+Synthetic pairs MUST be programmatically generated; hand-authoring is
+disallowed. This module is the single entry point.
 Re-running it is idempotent (same output every time) and is the only
 supported way to update ``bench/pairs/synthetic/``.
 
@@ -650,8 +650,8 @@ def _write_pair(target: Path, spec: dict[str, Any]) -> None:
 
 def _cross_framework_identity_pairs() -> Iterable[dict[str, Any]]:
     """Cross-framework pairs that MUST diff to ``()`` -- the empirical
-    backbone of PAPER.md C4 (a pandas pipeline and the structurally
-    equivalent SQL query produce equivalent fingerprints)."""
+    backbone of the cross-framework equivalence claim (a pandas pipeline and
+    the structurally equivalent SQL query produce equivalent fingerprints)."""
 
     events = [("uid", "int64"), ("score", "float64")]
 
@@ -836,8 +836,8 @@ def _cross_framework_sort_pairs() -> Iterable[dict[str, Any]]:
 def _cross_framework_polars_pairs() -> Iterable[dict[str, Any]]:
     """Cross-framework pairs exercising the third tracer (Polars), both
     against SQL and directly against pandas. Identity pairs MUST diff to
-    ``()`` (PAPER.md C4, extended to three frameworks); the sum-vs-avg
-    pair must still surface ``aggregation_function``."""
+    ``()`` (cross-framework equivalence, extended to three frameworks); the
+    sum-vs-avg pair must still surface ``aggregation_function``."""
 
     events = [("uid", "int64"), ("score", "float64")]
     filter_project_src = (
