@@ -1,0 +1,28 @@
+name: fp16_train_infer_precision_mismatch
+bucket: replayed_bugs
+category: type_coercion
+description: >
+  Reconstructs the training-inference numerical-precision mismatch documented
+  in Qi et al., "Defeating the Training-Inference Mismatch via FP16" (arXiv
+  2510.26788): low-precision floating point (BF16) introduces rounding errors
+  that break consistency between training and inference. MirrorML's dtype
+  vocabulary has no bf16/fp16, so the precision gap is modeled as float32
+  (reduced precision) on the training side vs float64 at serving; MirrorML
+  flags the dtype divergence as type_coercion.
+postmortem_url: https://arxiv.org/abs/2510.26788
+expected_divergences:
+  - category: type_coercion
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+      - [uid, int64]
+      - [score, float32]
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+      - [uid, int64]
+      - [score, float64]
