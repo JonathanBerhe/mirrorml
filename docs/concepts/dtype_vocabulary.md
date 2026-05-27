@@ -128,8 +128,8 @@ valid. There is no fixed-length list yet; if needed we will add
 
 - `struct[<field>: <dtype>, ...]` — heterogeneous record type.
 - `map[<key dtype>, <value dtype>]` — key-value pairs.
-- `dictionary[<index dtype>, <value dtype>]` — Arrow dictionary-encoded
-  type. Useful for categoricals; the M2 categorical-encoding work may
+- `dictionary[<index dtype>, <value dtype>]` (Arrow dictionary-encoded
+  type). Useful for categoricals; future categorical-encoding support may
   promote this.
 - `fixed_size_binary[<n>]`.
 
@@ -139,10 +139,9 @@ existing fingerprint is invalidated.
 
 ## Tracer mapping
 
-When the M2 tracers land, each must normalize its framework's native
-dtype repertoire into this canonical form. Authoritative mappings will
-live next to the tracers; the high-level intent is sketched below for
-reference.
+Each tracer normalizes its framework's native dtype repertoire into this
+canonical form. Authoritative mappings live next to the tracers; the
+high-level intent is sketched below for reference.
 
 ### pandas → canonical
 
@@ -176,8 +175,8 @@ reference.
 
 ### SQL → canonical
 
-Dialect-specific. The M2 SQL tracer will dispatch via sqlglot's
-`DataType` AST. Examples for common dialects:
+Dialect-specific. The SQL tracer dispatches via sqlglot's `DataType` AST.
+Examples for common dialects:
 
 | SQL (Snowflake / BigQuery / Postgres) | canonical |
 |---|---|
@@ -209,8 +208,8 @@ divergence touches a dtype:
 - `list[int64]` vs `list[int32]` → `type_coercion` (recursive).
 - `utf8` vs `int64` → `schema_drift` (kind difference).
 
-The classifier rules land in M3 alongside the diff engine. This list is
-the design contract those rules must satisfy.
+The diff classifier implements these rules. This list is the design
+contract those rules satisfy.
 
 ## Limits
 
