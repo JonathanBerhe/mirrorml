@@ -449,3 +449,59 @@ def _classify_window(left: Operation, right: Operation) -> Iterator[Divergence]:
             right_op_id=right.op_id,
             detail=f"window partition keys: {left.over} vs {right.over}",
         )
+    if left.order_by != right.order_by:
+        yield Divergence(
+            category="ordering_dependence",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"window ORDER BY: {left.order_by} vs {right.order_by}",
+        )
+    yield from _classify_windowed_aggregations(left, right)
+
+
+def _classify_windowed_aggregations(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare the per-column aggregations of two Window ops.
+
+    Mirrors :func:`_classify_aggregate`: a differing reduction function or
+    input column on the same output column is an ``aggregation_function``
+    divergence; an output column present on only one side is
+    ``schema_drift``. Without this, a window whose aggregation changed (mean
+    vs sum) but whose frame is identical would slip through silently."""
+
+    assert left.kind == "window" and right.kind == "window"
+    left_aggs = {out: (inp, func) for out, inp, func in left.aggregations}
+    right_aggs = {out: (inp, func) for out, inp, func in right.aggregations}
+
+    for out, (left_input, left_func) in left_aggs.items():
+        if out not in right_aggs:
+            yield Divergence(
+                category="schema_drift",
+                left_op_id=left.op_id,
+                right_op_id=right.op_id,
+                detail=f"windowed aggregation {out!r} present on left but not right",
+            )
+            continue
+        right_input, right_func = right_aggs[out]
+        if left_func != right_func:
+            yield Divergence(
+                category="aggregation_function",
+                left_op_id=left.op_id,
+                right_op_id=right.op_id,
+                detail=f"windowed aggregation {out!r}: function {left_func!r} vs {right_func!r}",
+            )
+        if left_input != right_input:
+            yield Divergence(
+                category="aggregation_function",
+                left_op_id=left.op_id,
+                right_op_id=right.op_id,
+                detail=f"windowed aggregation {out!r}: input column {left_input!r} vs {right_input!r}",
+            )
+
+    for out in right_aggs:
+        if out not in left_aggs:
+            yield Divergence(
+                category="schema_drift",
+                left_op_id=left.op_id,
+                right_op_id=right.op_id,
+                detail=f"windowed aggregation {out!r} present on right but not left",
+            )

@@ -245,6 +245,73 @@ def _ordering_dependence_pairs() -> Iterable[dict[str, Any]]:
     }
 
 
+def _rolling_window_sql(lookback: int | str, agg: str = "AVG") -> str:
+    """A trailing rolling-window SELECT. ``lookback`` is the PRECEDING row
+    count, or the string ``"unbounded"`` for a cumulative window."""
+
+    start = "UNBOUNDED PRECEDING" if lookback == "unbounded" else f"{lookback} PRECEDING"
+    return (
+        f"SELECT uid, ts, {agg}(score) OVER (PARTITION BY uid ORDER BY ts "
+        f"ROWS BETWEEN {start} AND CURRENT ROW) AS roll FROM events\n"
+    )
+
+
+def _window_function_pairs() -> Iterable[dict[str, Any]]:
+    """Rolling-window pairs. Activate ``window_size_mismatch`` (different
+    lookback) and exercise windowed-aggregation-function differences. The
+    SQL tracer supports only the trailing ROWS frame, so every frame here
+    is ``ROWS BETWEEN <n> PRECEDING AND CURRENT ROW``."""
+
+    schema = [("uid", "int64"), ("ts", "timestamp[ns, UTC]"), ("score", "float64")]
+
+    yield {
+        "name": "identity_window_rolling_mean",
+        "category": "identity",
+        "description": "Same 3-row trailing mean on both sides; diff must be empty.",
+        "offline_sql": _rolling_window_sql(2),
+        "online_sql": _rolling_window_sql(2),
+        "offline_schemas": {"events": schema},
+        "online_schemas": {"events": schema},
+        "expected_divergences": [],
+    }
+
+    for i, (off_n, on_n) in enumerate([(2, 4), (3, 5), (4, 9)]):
+        yield {
+            "name": f"window_size_mismatch_{i:03d}",
+            "category": "window_size_mismatch",
+            "description": (
+                f"Offline rolling mean over {off_n + 1} rows; online over {on_n + 1} rows."
+            ),
+            "offline_sql": _rolling_window_sql(off_n),
+            "online_sql": _rolling_window_sql(on_n),
+            "offline_schemas": {"events": schema},
+            "online_schemas": {"events": schema},
+            "expected_divergences": [{"category": "window_size_mismatch"}],
+        }
+
+    yield {
+        "name": "window_size_mismatch_unbounded_vs_bounded",
+        "category": "window_size_mismatch",
+        "description": "Offline cumulative (unbounded) mean; online 3-row trailing mean.",
+        "offline_sql": _rolling_window_sql("unbounded"),
+        "online_sql": _rolling_window_sql(2),
+        "offline_schemas": {"events": schema},
+        "online_schemas": {"events": schema},
+        "expected_divergences": [{"category": "window_size_mismatch"}],
+    }
+
+    yield {
+        "name": "window_aggregation_function_mean_vs_sum",
+        "category": "aggregation_function",
+        "description": "Same trailing window; offline averages, online sums.",
+        "offline_sql": _rolling_window_sql(2, agg="AVG"),
+        "online_sql": _rolling_window_sql(2, agg="SUM"),
+        "offline_schemas": {"events": schema},
+        "online_schemas": {"events": schema},
+        "expected_divergences": [{"category": "aggregation_function"}],
+    }
+
+
 def _identity_pairs() -> Iterable[dict[str, Any]]:
     """Negative-control pairs: structurally equivalent pipelines that
     must diff to ``()``. These are essential for precision; without
@@ -299,6 +366,7 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _aggregation_function_pairs()
     yield from _join_key_mismatch_pairs()
     yield from _ordering_dependence_pairs()
+    yield from _window_function_pairs()
     yield from _cross_framework_identity_pairs()
     yield from _cross_framework_divergence_pairs()
     yield from _cross_framework_polars_pairs()

@@ -37,8 +37,22 @@ import sqlglot.expressions as exp
 
 from mirrorml.exceptions import UnsupportedOperationError
 from mirrorml.fingerprint import build_fingerprint
-from mirrorml.fingerprint.operations import Aggregate, Filter, Join, Project, Sort, Source
-from mirrorml.fingerprint.schema import ColumnSpec, Fingerprint, Operation, SchemaDelta
+from mirrorml.fingerprint.operations import (
+    Aggregate,
+    Filter,
+    Join,
+    Project,
+    Sort,
+    Source,
+    Window,
+)
+from mirrorml.fingerprint.schema import (
+    ColumnSpec,
+    Fingerprint,
+    Operation,
+    SchemaDelta,
+    TemporalSemantics,
+)
 
 # Map sqlglot's aggregate function classes to canonical reduction names.
 _AGG_FUNCS: dict[type[exp.AggFunc], str] = {
@@ -118,9 +132,23 @@ def _walk_select(
         last_op_id = flt.op_id
 
     group_by_keys = _extract_group_by_keys(node)
+    has_window = _has_window_function(node)
     has_aggregations = any(_is_aggregation_call(_unwrap_alias(e)) for e in node.expressions)
 
-    if group_by_keys is not None or has_aggregations:
+    if has_window:
+        if group_by_keys is not None:
+            raise UnsupportedOperationError(
+                "SQL window functions combined with GROUP BY are not supported; "
+                "trace the windowed SELECT and the grouped SELECT as separate steps."
+            )
+        window_op, output_schema = _build_window(
+            node=node,
+            dependency=last_op_id,
+            source_dtypes=column_dtype,
+        )
+        operations.append(window_op)
+        last_op_id = window_op.op_id
+    elif group_by_keys is not None or has_aggregations:
         agg_op, output_schema = _build_aggregate(
             node=node,
             group_keys=group_by_keys or (),
@@ -642,6 +670,192 @@ def _default_aggregation_name(func: str, input_col: str | None) -> str:
     if input_col is None:
         return f"{func}(*)"
     return f"{func}({input_col})"
+
+
+def _has_window_function(node: exp.Select) -> bool:
+    """Whether any SELECT-list item is a window function (``... OVER (...)``)."""
+
+    return any(isinstance(_unwrap_alias(e), exp.Window) for e in node.expressions)
+
+
+def _build_window(
+    *,
+    node: exp.Select,
+    dependency: str,
+    source_dtypes: Mapping[str, str],
+) -> tuple[Window, tuple[ColumnSpec, ...]]:
+    """Construct a :class:`Window` op from a SELECT containing window functions.
+
+    Conservative phase-1 surface: every windowed item must share one OVER
+    spec (same PARTITION BY, ORDER BY, and frame), the frame must be a
+    trailing rows window (``ROWS BETWEEN {n|UNBOUNDED} PRECEDING AND CURRENT
+    ROW``), and non-window items must be bare passthrough columns. Anything
+    else raises :class:`UnsupportedOperationError` rather than risk a false
+    equivalence (CLAUDE.md: a missed divergence is worse than an explicit
+    "unsupported").
+    """
+
+    if len(node.expressions) == 1 and isinstance(node.expressions[0], exp.Star):
+        raise UnsupportedOperationError(
+            "SELECT * is not supported with window functions; name each output column explicitly."
+        )
+
+    output_schema_builder: list[ColumnSpec] = []
+    aggregations: list[tuple[str, str | None, str]] = []
+    signature: tuple[tuple[str, ...], tuple[str, ...], str] | None = None
+    over: tuple[str, ...] = ()
+    order_by: tuple[str, ...] = ()
+    size = ""
+
+    for item in node.expressions:
+        underlying = _unwrap_alias(item)
+        alias = item.alias if isinstance(item, exp.Alias) else None
+
+        if isinstance(underlying, exp.Column):
+            if underlying.name not in source_dtypes:
+                raise UnsupportedOperationError(
+                    f"SELECT references column {underlying.name!r}, which is not in "
+                    f"the post-FROM schema. Available: {sorted(source_dtypes)}"
+                )
+            output_name = alias or underlying.name
+            output_schema_builder.append((output_name, source_dtypes[underlying.name]))
+            continue
+
+        if isinstance(underlying, exp.Window):
+            inner = underlying.this
+            if not _is_aggregation_call(inner):
+                raise UnsupportedOperationError(
+                    f"window function {underlying.sql()!r} wraps a non-aggregate; only "
+                    f"COUNT / SUM / AVG / MIN / MAX OVER (...) are supported."
+                )
+            input_col, func = _interpret_aggregation_call(inner)
+            this_over = _window_partition_columns(underlying)
+            this_order = _window_order_columns(underlying)
+            this_size = _interpret_window_frame(underlying)
+
+            this_signature = (this_over, this_order, this_size)
+            if signature is None:
+                signature = this_signature
+                over, order_by, size = this_over, this_order, this_size
+            elif this_signature != signature:
+                raise UnsupportedOperationError(
+                    "multiple window functions with different OVER specs in one "
+                    "SELECT are not supported; give each its own SELECT."
+                )
+
+            output_name = alias or _default_aggregation_name(func, input_col)
+            output_dtype = _aggregation_output_dtype(func, input_col, source_dtypes)
+            aggregations.append((output_name, input_col, func))
+            output_schema_builder.append((output_name, output_dtype))
+            continue
+
+        raise UnsupportedOperationError(
+            f"SELECT item {item.sql()!r} alongside a window function must be a bare "
+            f"passthrough column or another window aggregation."
+        )
+
+    for col in (*over, *order_by):
+        if col not in source_dtypes:
+            raise UnsupportedOperationError(
+                f"window OVER references column {col!r}, which is not in the source "
+                f"schema. Available: {sorted(source_dtypes)}"
+            )
+
+    window_op = Window(
+        op_id="window",
+        dependencies=(dependency,),
+        over=over,
+        order_by=order_by,
+        size=size,
+        aggregations=tuple(aggregations),
+        # Only trailing "... AND CURRENT ROW" frames are accepted, so the
+        # right edge (the current row) is always included. window_boundary
+        # (closed-left vs closed-right) needs time/RANGE windows and is
+        # deferred; this never claims to detect it.
+        temporal=TemporalSemantics(closed="right"),
+    )
+    return window_op, tuple(output_schema_builder)
+
+
+def _window_partition_columns(window: exp.Window) -> tuple[str, ...]:
+    cols: list[str] = []
+    for part in window.args.get("partition_by") or []:
+        if not isinstance(part, exp.Column):
+            raise UnsupportedOperationError(
+                f"window PARTITION BY {part.sql()!r} must be a bare column reference."
+            )
+        cols.append(part.name)
+    return tuple(cols)
+
+
+def _window_order_columns(window: exp.Window) -> tuple[str, ...]:
+    order = window.args.get("order")
+    if order is None:
+        return ()
+    cols: list[str] = []
+    for item in order.expressions:
+        target = item.this if isinstance(item, exp.Ordered) else item
+        if not isinstance(target, exp.Column):
+            raise UnsupportedOperationError(
+                f"window ORDER BY {item.sql()!r} must be a bare column reference."
+            )
+        cols.append(target.name)
+    return tuple(cols)
+
+
+def _interpret_window_frame(window: exp.Window) -> str:
+    """Canonicalize a window frame to a ``size`` string.
+
+    Only a trailing rows window ``ROWS BETWEEN {n|UNBOUNDED} PRECEDING AND
+    CURRENT ROW`` is supported (size ``"{n+1}rows"`` or ``"unbounded"``).
+    RANGE / GROUPS frames, FOLLOWING ends, offset-PRECEDING ends, frameless
+    windows, and EXCLUDE clauses are rejected so the fingerprint never
+    conflates two genuinely different windows.
+    """
+
+    spec = window.args.get("spec")
+    if not isinstance(spec, exp.WindowSpec):
+        raise UnsupportedOperationError(
+            "window without an explicit ROWS frame is not supported; add "
+            "'ROWS BETWEEN <n> PRECEDING AND CURRENT ROW'."
+        )
+    if str(spec.args.get("kind") or "").upper() != "ROWS":
+        raise UnsupportedOperationError(
+            "window frame must be a ROWS frame; RANGE and GROUPS frames are deferred "
+            "(they need value-based boundary modeling)."
+        )
+    if spec.args.get("exclude"):
+        raise UnsupportedOperationError("window EXCLUDE clauses are not supported.")
+    if str(spec.args.get("start_side") or "").upper() != "PRECEDING":
+        raise UnsupportedOperationError(
+            "window frame start must be 'UNBOUNDED PRECEDING' or '<n> PRECEDING'."
+        )
+
+    end = spec.args.get("end")
+    if not (
+        isinstance(end, str) and end.upper() == "CURRENT ROW" and spec.args.get("end_side") is None
+    ):
+        raise UnsupportedOperationError(
+            "window frame end must be 'CURRENT ROW'; FOLLOWING and offset-PRECEDING "
+            "ends are deferred (the boundary needs separate modeling)."
+        )
+
+    start = spec.args.get("start")
+    if isinstance(start, str) and start.upper() == "UNBOUNDED":
+        return "unbounded"
+    if isinstance(start, exp.Literal) and not start.args.get("is_string"):
+        try:
+            n = int(start.name)
+        except ValueError:
+            raise UnsupportedOperationError(
+                f"window frame start offset {start.name!r} is not an integer."
+            ) from None
+        if n < 0:
+            raise UnsupportedOperationError("window frame start offset must be non-negative.")
+        return f"{n + 1}rows"
+    raise UnsupportedOperationError(
+        "window frame start must be 'UNBOUNDED PRECEDING' or '<n> PRECEDING'."
+    )
 
 
 def _aggregation_output_dtype(

@@ -1,0 +1,31 @@
+name: window_size_mismatch_000
+bucket: synthetic
+category: window_size_mismatch
+description: Offline rolling mean over 3 rows; online over 5 rows.
+expected_divergences:
+- category: window_size_mismatch
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - ts
+      - timestamp[ns, UTC]
+    - - score
+      - float64
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    events:
+    - - uid
+      - int64
+    - - ts
+      - timestamp[ns, UTC]
+    - - score
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1
