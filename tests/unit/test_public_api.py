@@ -1,4 +1,4 @@
-"""The public API surface is a binding contract — exactly seven names."""
+"""The public API surface is a binding contract: exactly seven names."""
 
 from __future__ import annotations
 
@@ -30,13 +30,20 @@ def test_version_is_set() -> None:
 
 def test_pandas_and_polars_are_not_imported_eagerly() -> None:
     """Tracers must stay lazy w.r.t. their target frameworks (the < 200ms
-    import-time budget)."""
+    import-time budget).
 
+    Checked in a fresh subprocess so that other tests which legitimately
+    import pandas / polars (e.g. the statistical companion check) cannot
+    pollute this process's ``sys.modules`` and mask an eager import.
+    """
+
+    import subprocess
     import sys
 
-    assert "pandas" not in sys.modules, (
-        "importing mirrorml must not import pandas; tracer must be lazy"
+    code = (
+        "import sys; import mirrorml; "
+        "assert 'pandas' not in sys.modules, 'mirrorml eagerly imported pandas'; "
+        "assert 'polars' not in sys.modules, 'mirrorml eagerly imported polars'"
     )
-    assert "polars" not in sys.modules, (
-        "importing mirrorml must not import polars; tracer must be lazy"
-    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
