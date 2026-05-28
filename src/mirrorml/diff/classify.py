@@ -123,12 +123,21 @@ def compare_schemas(
     right: tuple[ColumnSpec, ...],
     *,
     location: str,
+    left_op_id: OpId | None = None,
+    right_op_id: OpId | None = None,
 ) -> Iterator[Divergence]:
     """Diff two column lists.
 
     Columns present on only one side produce ``schema_drift`` divergences;
     common columns with different dtypes are routed through
     :func:`classify_dtype_difference`.
+
+    ``left_op_id`` and ``right_op_id`` are the ops responsible for the
+    schemas under comparison: the engine passes the Source op_ids when
+    diffing input schemas, and the terminal-op op_ids when diffing output
+    schemas. Embedding them lets downstream consumers (the CLI renderer,
+    the bench localization metric) point at the op that owns the column
+    list rather than treating schema divergences as un-localizable.
 
     Order of the output: drops (left-only) first, then adds (right-only),
     then per-common-column dtype divergences in left order. The ordering
@@ -142,6 +151,8 @@ def compare_schemas(
         if col not in right_dict:
             yield Divergence(
                 category="schema_drift",
+                left_op_id=left_op_id,
+                right_op_id=right_op_id,
                 detail=(
                     f"column {col!r} ({location}, dtype {dtype}) is present "
                     f"on the left but not the right"
@@ -152,6 +163,8 @@ def compare_schemas(
         if col not in left_dict:
             yield Divergence(
                 category="schema_drift",
+                left_op_id=left_op_id,
+                right_op_id=right_op_id,
                 detail=(
                     f"column {col!r} ({location}, dtype {dtype}) is present "
                     f"on the right but not the left"
@@ -162,7 +175,8 @@ def compare_schemas(
         right_dtype = right_dict.get(col)
         if right_dtype is None or right_dtype == left_dtype:
             continue
-        yield classify_dtype_difference(col, left_dtype, right_dtype, location=location)
+        div = classify_dtype_difference(col, left_dtype, right_dtype, location=location)
+        yield div.model_copy(update={"left_op_id": left_op_id, "right_op_id": right_op_id})
 
 
 # --- op-pair classification --------------------------------------------------

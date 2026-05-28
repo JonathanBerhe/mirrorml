@@ -24,6 +24,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from mirrorml.diff.classify import Divergence, classify_op_pair, compare_schemas
+from mirrorml.fingerprint.operations import Source
 from mirrorml.fingerprint.schema import Fingerprint, Operation
 
 __all__ = ["diff"]
@@ -94,13 +95,61 @@ def diff(left: Fingerprint, right: Fingerprint, /) -> tuple[Divergence, ...]:
 
     divergences: list[Divergence] = []
 
-    divergences.extend(compare_schemas(left.input_schema, right.input_schema, location="input"))
-    divergences.extend(compare_schemas(left.output_schema, right.output_schema, location="output"))
+    left_input_op_id = _primary_source_op_id(left)
+    right_input_op_id = _primary_source_op_id(right)
+    divergences.extend(
+        compare_schemas(
+            left.input_schema,
+            right.input_schema,
+            location="input",
+            left_op_id=left_input_op_id,
+            right_op_id=right_input_op_id,
+        )
+    )
+
+    left_output_op_id = left.operations[-1].op_id if left.operations else None
+    right_output_op_id = right.operations[-1].op_id if right.operations else None
+    divergences.extend(
+        compare_schemas(
+            left.output_schema,
+            right.output_schema,
+            location="output",
+            left_op_id=left_output_op_id,
+            right_op_id=right_output_op_id,
+        )
+    )
 
     for step in _align_operations(left.operations, right.operations):
         divergences.extend(_classify_alignment_step(step))
 
     return tuple(divergences)
+
+
+def _primary_source_op_id(fp: Fingerprint) -> str | None:
+    """Find the Source op whose columns match the fingerprint's
+    ``input_schema``. Multi-source pipelines (e.g. joins) carry multiple
+    Source ops; the one whose columns equal ``input_schema`` is the
+    primary table the input-schema check is comparing against. Returns
+    ``None`` for pipelines with no Source.
+    """
+
+    for op in fp.operations:
+        if isinstance(op, Source) and op.columns == fp.input_schema:
+            return op.op_id
+
+    # HACK: every tracer shipped today constructs the primary Source so its
+    # ``columns`` are exactly ``input_schema``, so the exact-match loop
+    # above always returns. The fallback below covers a hypothetical future
+    # tracer that diverges from that invariant: rather than crash the diff
+    # engine, we attribute input-schema divergences to *some* Source so the
+    # engine output stays well-formed. In a multi-source pipeline this can
+    # mislocalize. The right long-term fix is to either enforce the
+    # invariant at fingerprint-construction time or extend the schema to
+    # name a primary-source op_id explicitly.
+    for op in fp.operations:
+        if isinstance(op, Source):
+            return op.op_id
+    return None
 
 
 def _classify_alignment_step(step: _AlignmentStep) -> Iterator[Divergence]:

@@ -19,6 +19,41 @@ EVENTS_TS = (
 )
 
 
+# --- schema-divergence localization ------------------------------------------
+
+
+def test_input_schema_divergence_localizes_to_source_op() -> None:
+    """Input-schema differences (e.g. column dtype change) are attributable
+    to the Source op that carries the column list. The engine attaches
+    that Source op_id on each side so callers (CLI renderer, bench
+    localization metric) can point at the responsible op rather than
+    treat the divergence as un-localizable."""
+
+    a = trace_sql("SELECT ts FROM events", schemas={"events": (("ts", "timestamp[ns, UTC]"),)})
+    b = trace_sql(
+        "SELECT ts FROM events",
+        schemas={"events": (("ts", "timestamp[ns, US/Pacific]"),)},
+    )
+    tz_divs = [d for d in diff(a, b) if d.category == "timezone_mismatch"]
+    assert tz_divs
+    a_source = next(op for op in a.operations if op.kind == "source")
+    b_source = next(op for op in b.operations if op.kind == "source")
+    assert any(d.left_op_id == a_source.op_id and d.right_op_id == b_source.op_id for d in tz_divs)
+
+
+def test_output_schema_divergence_localizes_to_terminal_op() -> None:
+    """Output-schema differences (e.g. an extra column produced on one
+    side) attribute to the terminal op on each side, so localization can
+    point at the Project / Aggregate / etc. that owns the output."""
+
+    a = trace_sql("SELECT uid FROM events", schemas={"events": EVENTS})
+    b = trace_sql("SELECT uid, score FROM events", schemas={"events": EVENTS})
+    output_drifts = [d for d in diff(a, b) if d.category == "schema_drift" and "output" in d.detail]
+    assert output_drifts
+    assert all(d.left_op_id == a.operations[-1].op_id for d in output_drifts)
+    assert all(d.right_op_id == b.operations[-1].op_id for d in output_drifts)
+
+
 # --- identity ----------------------------------------------------------------
 
 
