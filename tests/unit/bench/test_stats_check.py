@@ -46,16 +46,49 @@ def test_synthetic_sql_identity_pair_is_statistically_equivalent() -> None:
     assert result is not None and result.equivalent
 
 
-def test_polars_pair_using_pl_source_is_skipped() -> None:
-    # pl.source(...) is a tracing-namespace construct, not part of real
-    # polars; pipelines that use it for a second input table cannot run
-    # statistically here and are reported as a clean skip.
+def test_polars_pair_using_pl_source_runs_via_wrapper_namespace() -> None:
+    # ``pl.source(...)`` is a tracing-namespace construct; the stats path
+    # now traces each side to discover declared sources, generates a
+    # fixture per source, and supplies a thin wrapper around real polars
+    # whose ``.source(...)`` returns a LazyFrame over the matching
+    # fixture. The pipeline runs unchanged. The forward / backward
+    # as-of-join difference does not always surface on a tiny fixture,
+    # so we assert only that the check ran (no skip).
     result, reason = statistically_check_pair(REPLAYED / "pit_leakage_forward_asof")
-    assert result is None
-    assert "skipped" in reason
+    assert reason == "", reason
+    assert result is not None
 
 
 # --- divergent pairs (must come back not equivalent) ------------------------
+
+
+def test_polars_aux_source_namespace_resolves_known_sources() -> None:
+    """Unit-level: the polars wrapper namespace returns a real LazyFrame
+    for sources declared via ``pl.source(...)`` and raises for unknown
+    names, so a typo in a pipeline does not silently produce empty
+    results."""
+
+    from collections.abc import Mapping, Sequence
+    from typing import Any
+
+    import polars as pl
+
+    from mirrorml.exceptions import UnsupportedOperationError
+    from mirrorml.stats import _polars_namespace_with_aux
+
+    aux: Mapping[str, Mapping[str, Sequence[Any]]] = {
+        "prices": {"uid": [1, 2], "price": [10.0, 20.0]},
+    }
+    ns = _polars_namespace_with_aux(pl, aux)
+
+    frame = ns.source("prices", schema=[("uid", "int64"), ("price", "float64")])
+    collected = frame.collect()
+    assert collected.to_dict(as_series=False) == {"uid": [1, 2], "price": [10.0, 20.0]}
+
+    import pytest
+
+    with pytest.raises(UnsupportedOperationError, match="prices"):
+        ns.source("missing", schema=[("uid", "int64")])
 
 
 def test_synthetic_aggregation_function_divergence_caught_statistically() -> None:
@@ -75,6 +108,16 @@ def test_replayed_breck_fillna_divergence_caught_statistically() -> None:
 # --- skips (unsupported shapes) ---------------------------------------------
 
 
+def test_sql_multi_table_join_passes_all_fixtures_to_executor() -> None:
+    """Identity SQL pair with two source tables must come back equivalent
+    (the executor sees both tables and produces matching joins on each
+    side)."""
+
+    result, reason = statistically_check_pair(SYN / "identity" / "identity_join_pipeline")
+    assert reason == "", reason
+    assert result is not None and result.equivalent
+
+
 def test_window_pair_is_skipped_with_reason() -> None:
     result, reason = statistically_check_pair(
         SYN / "window_size_mismatch" / "window_size_mismatch_000"
@@ -83,11 +126,15 @@ def test_window_pair_is_skipped_with_reason() -> None:
     assert "window" in reason or "skipped" in reason
 
 
-def test_multi_table_join_pair_is_skipped() -> None:
-    # join pairs declare two source tables; the stats SQL path is currently
-    # single-source so this side is skipped with a clear message.
+def test_multi_table_join_pair_runs_via_multi_table_fixture() -> None:
+    # The stats SQL path now generates one fixture per declared table and
+    # passes them all to sqlglot's executor, so multi-table JOIN queries
+    # run. The k1 vs k2 difference on a deterministic 6-row fixture often
+    # produces equivalent output, which is the expected complementarity
+    # of static vs statistical checks (the static fingerprint flags it,
+    # the small fixture does not surface it).
     result, reason = statistically_check_pair(
         SYN / "join_key_mismatch" / "join_key_mismatch_single_key"
     )
-    assert result is None
-    assert "single-source" in reason or "skipped" in reason
+    assert reason == "", reason
+    assert result is not None

@@ -133,8 +133,24 @@ def statistical_check(
 
 
 def run_pipeline(
-    pipeline: object, fixture: object, framework: str, *, source_name: str = "input"
+    pipeline: object,
+    fixture: object,
+    framework: str,
+    *,
+    source_name: str = "input",
+    aux_sources: Mapping[str, Mapping[str, Sequence[Any]]] | None = None,
 ) -> dict[str, list[Any]]:
+    """Execute one pipeline on a fixture and return ``{column: values}``.
+
+    ``aux_sources`` (optional) names additional input tables the pipeline
+    consumes. SQL pipelines that JOIN multiple tables get them passed to
+    sqlglot's executor under their declared names. Polars pipelines that
+    call ``pl.source(name, schema=...)`` (a tracing-namespace construct)
+    get a thin wrapper namespace whose ``.source(...)`` returns a real
+    ``LazyFrame`` built from the matching aux fixture, so the pipeline
+    code runs unchanged under both the tracer and the statistical check.
+    """
+
     columns = _to_columns(fixture)
     if framework == "pandas":
         if not callable(pipeline):
@@ -152,40 +168,91 @@ def run_pipeline(
                 "statistical_check(framework='polars'): pipeline must be a callable "
                 "taking (LazyFrame, pl)."
             )
+        import warnings
+
         import polars as pl
 
+        namespace: Any = _polars_namespace_with_aux(pl, aux_sources) if aux_sources else pl
         frame: Any = pl.LazyFrame(columns)
-        output: Any = pipeline(frame, pl)
-        collected = output.collect() if hasattr(output, "collect") else output
+        output: Any = pipeline(frame, namespace)
+        with warnings.catch_warnings():
+            # Polars warns when ``join_asof(by=...)`` or ``rolling(group_by=...)``
+            # is invoked on a frame whose sortedness it cannot verify. The
+            # fixture is small and deterministic; the warning is informational,
+            # not a correctness signal, and would otherwise clutter CI output.
+            warnings.filterwarnings(
+                "ignore",
+                message=r"Sortedness of columns cannot be checked",
+                category=UserWarning,
+            )
+            collected = output.collect() if hasattr(output, "collect") else output
         return _to_columns(collected)
     if framework == "sql":
         if not isinstance(pipeline, str):
             raise UnsupportedOperationError(
                 "statistical_check(framework='sql'): pipeline must be a SQL query string."
             )
-        return _run_sql(pipeline, columns, source_name=source_name)
+        return _run_sql(pipeline, columns, source_name=source_name, aux_sources=aux_sources)
     raise UnsupportedOperationError(
         f"statistical_check: framework {framework!r} is not supported; "
         f"'pandas', 'polars', and 'sql' are."
     )
 
 
+def _polars_namespace_with_aux(
+    pl_module: Any, aux_sources: Mapping[str, Mapping[str, Sequence[Any]]]
+) -> Any:
+    """Return a thin proxy over the real ``polars`` module that resolves
+    ``pl.source(name, schema=...)`` to a real ``LazyFrame`` over the
+    matching aux fixture. Everything else delegates to the real module."""
+
+    fixtures = {
+        name: {column: list(values) for column, values in columns.items()}
+        for name, columns in aux_sources.items()
+    }
+
+    class _StatsPolarsNamespace:
+        def __getattr__(self, item: str) -> Any:
+            return getattr(pl_module, item)
+
+        def source(self, name: str, *, schema: object) -> Any:
+            del schema  # the real schema is whatever the fixture columns are
+            if name not in fixtures:
+                raise UnsupportedOperationError(
+                    f"statistical_check(framework='polars'): pl.source({name!r}, ...) "
+                    f"has no aux fixture; available aux sources are "
+                    f"{sorted(fixtures)}"
+                )
+            return pl_module.LazyFrame(fixtures[name])
+
+    return _StatsPolarsNamespace()
+
+
 def _run_sql(
-    query: str, columns: Mapping[str, Sequence[Any]], *, source_name: str
+    query: str,
+    columns: Mapping[str, Sequence[Any]],
+    *,
+    source_name: str,
+    aux_sources: Mapping[str, Mapping[str, Sequence[Any]]] | None = None,
 ) -> dict[str, list[Any]]:
     """Execute ``query`` over the fixture using sqlglot's built-in executor.
 
     The executor handles SELECT / WHERE / GROUP BY / JOIN / ORDER BY but not
     window functions; the latter raise :class:`UnsupportedOperationError`
-    rather than a sqlglot internal exception.
+    rather than a sqlglot internal exception. ``aux_sources`` adds extra
+    tables (each a ``{column: values}`` fixture) under their declared
+    names so multi-table joins can run.
     """
 
     from sqlglot import executor
     from sqlglot.errors import ExecuteError
 
-    nrows = _row_count(columns)
-    rows = [{column: columns[column][i] for column in columns} for i in range(nrows)]
-    tables = {source_name: rows}
+    tables = {source_name: _columns_to_rows(columns)}
+    if aux_sources:
+        for aux_name, aux_columns in aux_sources.items():
+            if aux_name == source_name:
+                continue
+            tables[aux_name] = _columns_to_rows(aux_columns)
 
     try:
         result = executor.execute(query, tables=tables)
@@ -199,6 +266,14 @@ def _run_sql(
     return {
         column: [row[index] for row in result.rows] for index, column in enumerate(output_columns)
     }
+
+
+def _columns_to_rows(columns: Mapping[str, Sequence[Any]]) -> list[dict[str, Any]]:
+    """Reshape ``{column: values}`` into ``[{column: value} per row]`` for
+    sqlglot's executor, which is row-oriented."""
+
+    nrows = _row_count(columns)
+    return [{column: columns[column][i] for column in columns} for i in range(nrows)]
 
 
 def _to_columns(frame: object) -> dict[str, list[Any]]:

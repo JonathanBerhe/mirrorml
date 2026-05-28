@@ -1,11 +1,16 @@
 """Statistical check of a single bench pair.
 
-Loads a pair's ``meta.yaml``, generates a small deterministic fixture from
-its input schema, runs both sides via the statistical companion check, and
-returns the result. Shapes the in-process executor cannot handle (window
-functions in SQL, multi-table joins on the SQL stats path, dtypes the
-fixture generator does not yet handle) are reported as a skip with a reason
-so a batch run can continue.
+Loads a pair's ``meta.yaml``, generates small deterministic fixtures for
+each declared source table, runs both sides via the statistical companion
+check, and returns the result. Shapes the in-process executor cannot handle
+(window functions in SQL, dtypes the fixture generator does not yet
+support) are reported as a skip with a reason so a batch run can continue.
+
+Multi-source pipelines are handled by tracing each side once to enumerate
+all Source ops + their schemas: SQL pairs that JOIN multiple tables get
+each table's fixture passed to sqlglot's executor; polars pairs that
+declare a second input via ``pl.source(name, schema=...)`` get a thin
+wrapper namespace whose ``.source(...)`` returns a real ``LazyFrame``.
 
 Standalone from the static evaluator (``run_eval.py``); a future change can
 fold the per-pair statistical result into that evaluator's JSON output.
@@ -23,7 +28,9 @@ from typing import Any
 import yaml
 
 from mirrorml.exceptions import UnsupportedOperationError
+from mirrorml.fingerprint.operations import Source
 from mirrorml.stats import StatComparison, compare_frames, run_pipeline
+from mirrorml.tracers import trace_pandas, trace_polars
 
 
 def generate_fixture(
@@ -96,15 +103,23 @@ def _run_side(pair_dir: Path, side: dict[str, Any], *, side_label: str) -> dict[
     language = side.get("language")
     if language == "sql":
         schemas = side.get("schemas") or {}
-        if len(schemas) != 1:
+        if not schemas:
             raise UnsupportedOperationError(
-                f"sql side ({side_label}): the stats SQL path currently supports "
-                f"single-source queries; got {len(schemas)} tables."
+                f"sql side ({side_label}): meta.yaml declares no schemas"
             )
-        ((table_name, table_schema),) = schemas.items()
-        fixture = generate_fixture(tuple((c, d) for c, d in table_schema))
+        # Generate one fixture per declared table; pass the primary
+        # (alphabetically first, for determinism) as ``source_name`` and
+        # the rest as ``aux_sources`` so sqlglot's executor can JOIN them.
+        fixtures = {
+            name: generate_fixture(tuple((c, d) for c, d in cols)) for name, cols in schemas.items()
+        }
+        primary_name = sorted(fixtures)[0]
+        primary_fixture = fixtures[primary_name]
+        aux_sources = {n: f for n, f in fixtures.items() if n != primary_name} or None
         query = (pair_dir / side["source"]).read_text()
-        return run_pipeline(query, fixture, "sql", source_name=table_name)
+        return run_pipeline(
+            query, primary_fixture, "sql", source_name=primary_name, aux_sources=aux_sources
+        )
 
     if language in ("pandas", "polars"):
         raw_schema = side.get("input_schema")
@@ -112,13 +127,46 @@ def _run_side(pair_dir: Path, side: dict[str, Any], *, side_label: str) -> dict[
             raise UnsupportedOperationError(
                 f"{language} side ({side_label}): meta.yaml must declare an input_schema"
             )
-        fixture = generate_fixture(tuple((c, d) for c, d in raw_schema))
+        primary_name = side.get("source_name", "input")
+        primary_schema = tuple((c, d) for c, d in raw_schema)
+        fixture = generate_fixture(primary_schema)
+
         source_file = pair_dir / side["source"]
         function_name = side.get("function", side_label)
         pipeline = _load_callable(source_file, function_name, side_label=side_label)
-        return run_pipeline(pipeline, fixture, language)
+
+        # Discover any aux sources declared inside the pipeline (only
+        # meaningful for polars's ``pl.source(...)`` today; pandas pipelines
+        # always have exactly one source). Trace through the framework's own
+        # tracer so we see exactly what the static side sees.
+        aux_sources = _aux_sources_via_trace(pipeline, language, primary_schema, primary_name)
+        return run_pipeline(
+            pipeline, fixture, language, source_name=primary_name, aux_sources=aux_sources
+        )
 
     raise UnsupportedOperationError(f"unknown language {language!r} on side {side_label!r}")
+
+
+def _aux_sources_via_trace(
+    pipeline: Callable[..., object],
+    language: str,
+    primary_schema: tuple[tuple[str, str], ...],
+    primary_name: str,
+) -> dict[str, dict[str, list[Any]]] | None:
+    """Trace the pipeline to discover every declared Source op, generate
+    a fixture for each non-primary source, and return them keyed by name.
+
+    Returns ``None`` when there is exactly one source (the primary), so
+    callers can short-circuit the aux-sources path entirely.
+    """
+
+    trace = trace_polars if language == "polars" else trace_pandas
+    fp = trace(pipeline, input_schema=primary_schema, source_name=primary_name)
+    aux: dict[str, dict[str, list[Any]]] = {}
+    for op in fp.operations:
+        if isinstance(op, Source) and op.name != primary_name:
+            aux[op.name] = generate_fixture(op.columns)
+    return aux or None
 
 
 def _load_callable(
