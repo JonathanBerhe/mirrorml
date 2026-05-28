@@ -24,6 +24,7 @@ These names are internal / experimental and not part of the public API.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -315,6 +316,10 @@ def _cell_key(value: object) -> str:
     if value is None:
         return "\x00"
     if isinstance(value, float):
+        if math.isnan(value):
+            # Sort NaN with None so two outputs that produce NaN at the
+            # same logical position align in the sorted comparison.
+            return "\x00nan"
         return f"{value:.12g}"
     return str(value)
 
@@ -323,5 +328,12 @@ def _values_close(left: object, right: object, rtol: float, atol: float) -> bool
     if isinstance(left, bool) or isinstance(right, bool):
         return left == right
     if isinstance(left, int | float) and isinstance(right, int | float):
-        return abs(float(left) - float(right)) <= atol + rtol * abs(float(right))
+        left_f, right_f = float(left), float(right)
+        # Two NaNs at the same position mean the pipelines agree on
+        # "no value here"; that should not register as a divergence.
+        if math.isnan(left_f) and math.isnan(right_f):
+            return True
+        if math.isnan(left_f) or math.isnan(right_f):
+            return False
+        return abs(left_f - right_f) <= atol + rtol * abs(right_f)
     return left == right

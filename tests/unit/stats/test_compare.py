@@ -37,6 +37,24 @@ def test_numeric_beyond_tolerance_is_not_equivalent() -> None:
     assert "x" in result.detail
 
 
+def test_nan_at_same_position_is_equivalent() -> None:
+    """Two pipelines that both leave a cell as NaN agree; ``nan == nan``
+    is ``False`` in Python so the comparator must special-case this or it
+    would falsely flag identity-UDF pairs as divergent."""
+
+    left = {"x": [1.0, float("nan"), 3.0]}
+    right = {"x": [1.0, float("nan"), 3.0]}
+    assert compare_frames(left, right).equivalent
+
+
+def test_nan_vs_value_is_not_equivalent() -> None:
+    """NaN on one side and a real number on the other is a real
+    divergence."""
+
+    result = compare_frames({"x": [1.0]}, {"x": [float("nan")]})
+    assert not result.equivalent
+
+
 def test_column_set_mismatch_is_not_equivalent() -> None:
     result = compare_frames({"a": [1]}, {"b": [1]})
     assert not result.equivalent
