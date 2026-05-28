@@ -174,3 +174,22 @@ class Udf(_OpBase):
     ref: UdfRef
     input_columns: tuple[ColumnName, ...]
     output_columns: tuple[ColumnName, ...]
+
+
+class Sample(_OpBase):
+    """Random subsampling. Capturing the seed is what lets diff classify
+    ``seed_mismatch`` divergences.
+
+    Either ``n`` (absolute row count) or ``fraction`` (0 < f <= 1) is
+    populated; the unused field is ``None``. ``seed`` is the random-state
+    integer passed by the user; ``None`` means the pipeline did not pin
+    a seed, which is itself a divergence vs. a seed-pinned counterpart
+    (a non-reproducible sample on one side and a reproducible one on the
+    other is a real training-serving skew).
+    """
+
+    kind: Literal["sample"] = "sample"
+    n: int | None = None
+    fraction: float | None = None
+    seed: int | None = None
+    with_replacement: bool = False

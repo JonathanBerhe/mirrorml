@@ -46,3 +46,14 @@ def test_migrate_rejects_future_version_when_no_path_registered() -> None:
     raw["schema_version"] = "2.0.0"
     with pytest.raises(FingerprintVersionError, match="cannot be migrated"):
         migrate(raw)
+
+
+def test_migrate_upgrades_1_0_0_to_1_1_0() -> None:
+    """1.0.0 -> 1.1.0 is purely additive (new Sample op + optional
+    measurement_unit suffix). The migration restamps the version and
+    re-validates against the current schema."""
+
+    raw = _round_tripable_dict()
+    raw["schema_version"] = "1.0.0"
+    fp = migrate(raw)
+    assert fp.schema_version == "1.1.0"

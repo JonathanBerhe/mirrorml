@@ -22,10 +22,15 @@ from mirrorml.fingerprint.schema import (
 def migrate(raw: dict[str, Any], target: str = SCHEMA_VERSION) -> Fingerprint:
     """Upgrade a raw fingerprint dict to ``target`` schema version.
 
-    In v1.0.0 only one schema version exists, so this validates the input
-    version and constructs a :class:`Fingerprint` directly. Future versions
-    will dispatch on the source version and apply a chain of upgrade
-    functions registered here.
+    Currently registered transitions:
+
+    * ``1.0.0 -> 1.1.0``: purely additive (new ``Sample`` op family and
+      optional ``{measurement_unit}`` dtype suffix). 1.0.0 documents are
+      re-stamped with the new ``schema_version`` and validated directly
+      against the 1.1.0 schema; no field-level transformation is needed.
+
+    Future versions will dispatch on the source version and apply a
+    chain of upgrade functions registered here.
 
     ``raw`` is annotated as ``dict[str, Any]`` rather than a tighter
     JSON-value type because it is the deliberate boundary between
@@ -53,6 +58,9 @@ def migrate(raw: dict[str, Any], target: str = SCHEMA_VERSION) -> Fingerprint:
         )
 
     if version != target:
+        if version == "1.0.0" and target == "1.1.0":
+            # Additive upgrade: re-stamp and let Pydantic validate.
+            return Fingerprint.model_validate({**raw, "schema_version": "1.1.0"})
         raise FingerprintVersionError(
             f"fingerprint schema version {version!r} cannot be migrated to "
             f"target {target!r}; no migration path is registered. Either "

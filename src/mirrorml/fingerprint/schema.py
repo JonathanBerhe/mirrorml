@@ -27,9 +27,14 @@ from mirrorml.fingerprint._typing import ColumnName, Dtype, FingerprintId, OpId
 from mirrorml.fingerprint.canonical import canonical_json, canonicalize_operations
 from mirrorml.fingerprint.hash import fingerprint_id as compute_fingerprint_id
 
-SCHEMA_VERSION: Final[str] = "1.0.0"
+SCHEMA_VERSION: Final[str] = "1.1.0"
 """Current fingerprint schema version. Bumped on every breaking change to
-:class:`Fingerprint`, :class:`Operation`, or canonicalization rules."""
+:class:`Fingerprint`, :class:`Operation`, or canonicalization rules.
+
+1.1.0 (additive): new ``Sample`` op family (carries ``seed`` for
+``seed_mismatch``); optional ``{measurement_unit}`` suffix on numeric
+dtypes (drives ``unit_mismatch``). Both are additive: existing 1.0.0
+fingerprints remain valid in this build."""
 
 MIN_SUPPORTED_SCHEMA_VERSION: Final[str] = "1.0.0"
 """Oldest fingerprint version this build can load directly. Older documents
@@ -126,6 +131,7 @@ from mirrorml.fingerprint.operations import (  # noqa: E402
     Filter,
     Join,
     Project,
+    Sample,
     Sort,
     Source,
     Udf,
@@ -144,7 +150,8 @@ Operation: TypeAlias = Annotated[
     | FillNa
     | Cast
     | Encode
-    | Udf,
+    | Udf
+    | Sample,
     Field(discriminator="kind"),
 ]
 """Discriminated union over every supported operation kind. The ``kind``
@@ -209,7 +216,7 @@ def build_fingerprint(
         >>> len(fp.fingerprint_id)
         64
         >>> fp.schema_version
-        '1.0.0'
+        '1.1.0'
     """
 
     input_schema_t = tuple(input_schema)
