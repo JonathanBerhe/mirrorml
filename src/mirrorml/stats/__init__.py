@@ -13,17 +13,18 @@ This module provides:
   ``rtol`` / ``atol``, others exactly. Accepts a plain ``{column: values}``
   mapping or a pandas / Polars DataFrame (lazily converted, never imported
   at module load).
-* :func:`statistical_check` -- run two pandas / Polars pipelines on a shared
-  fixture and compare their outputs. SQL execution is deferred because it
-  needs a query engine; pass already-computed output frames to
-  :func:`compare_frames` for the SQL case.
+* :func:`statistical_check` -- run two pipelines on a shared fixture and
+  compare their outputs. For pandas / Polars the pipeline is a callable;
+  for SQL it is a query string executed via sqlglot's built-in executor
+  (no new runtime dependency). Window functions in SQL are not supported
+  by that executor and raise :class:`UnsupportedOperationError`.
 
 These names are internal / experimental and not part of the public API.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -99,11 +100,12 @@ def compare_frames(
 
 
 def statistical_check(
-    left: Callable[..., object],
-    right: Callable[..., object],
+    left: object,
+    right: object,
     fixture: object,
     *,
     framework: str,
+    source_name: str = "input",
     rtol: float = 1e-5,
     atol: float = 1e-8,
 ) -> StatComparison:
@@ -111,42 +113,92 @@ def statistical_check(
 
     ``framework`` selects how the pipelines are executed:
 
-    * ``"pandas"`` -- ``left(df)`` / ``right(df)`` on a ``pandas.DataFrame``.
-    * ``"polars"`` -- ``left(lf, pl)`` / ``right(lf, pl)`` on a
+    * ``"pandas"`` -- ``left(df)`` / ``right(df)`` callables on a
+      ``pandas.DataFrame``.
+    * ``"polars"`` -- ``left(lf, pl)`` / ``right(lf, pl)`` callables on a
       ``polars.LazyFrame`` with the real ``polars`` module (the same
       signature the tracer uses, so an unchanged pipeline runs both ways).
-
-    SQL pipelines are not executed here (that needs a query engine); compute
-    their outputs separately and call :func:`compare_frames`.
+    * ``"sql"`` -- ``left`` and ``right`` are SQL query strings, executed
+      via sqlglot's built-in executor against the fixture (no new runtime
+      dependency). ``source_name`` is the FROM table alias. Window
+      functions are not supported by the executor and raise.
     """
 
     return compare_frames(
-        _run(left, fixture, framework),
-        _run(right, fixture, framework),
+        _run(left, fixture, framework, source_name=source_name),
+        _run(right, fixture, framework, source_name=source_name),
         rtol=rtol,
         atol=atol,
     )
 
 
-def _run(pipeline: Callable[..., object], fixture: object, framework: str) -> dict[str, list[Any]]:
+def _run(
+    pipeline: object, fixture: object, framework: str, *, source_name: str = "input"
+) -> dict[str, list[Any]]:
     columns = _to_columns(fixture)
     if framework == "pandas":
+        if not callable(pipeline):
+            raise UnsupportedOperationError(
+                "statistical_check(framework='pandas'): pipeline must be a callable "
+                "taking a pandas DataFrame."
+            )
         import pandas as pd  # type: ignore[import-untyped]
 
         result: Any = pipeline(pd.DataFrame(columns))
         return _to_columns(result)
     if framework == "polars":
+        if not callable(pipeline):
+            raise UnsupportedOperationError(
+                "statistical_check(framework='polars'): pipeline must be a callable "
+                "taking (LazyFrame, pl)."
+            )
         import polars as pl
 
         frame: Any = pl.LazyFrame(columns)
         output: Any = pipeline(frame, pl)
         collected = output.collect() if hasattr(output, "collect") else output
         return _to_columns(collected)
+    if framework == "sql":
+        if not isinstance(pipeline, str):
+            raise UnsupportedOperationError(
+                "statistical_check(framework='sql'): pipeline must be a SQL query string."
+            )
+        return _run_sql(pipeline, columns, source_name=source_name)
     raise UnsupportedOperationError(
-        f"statistical_check: framework {framework!r} cannot be executed in-process; "
-        f"'pandas' and 'polars' are supported. SQL needs a query engine, so compute "
-        f"its outputs separately and use compare_frames."
+        f"statistical_check: framework {framework!r} is not supported; "
+        f"'pandas', 'polars', and 'sql' are."
     )
+
+
+def _run_sql(
+    query: str, columns: Mapping[str, Sequence[Any]], *, source_name: str
+) -> dict[str, list[Any]]:
+    """Execute ``query`` over the fixture using sqlglot's built-in executor.
+
+    The executor handles SELECT / WHERE / GROUP BY / JOIN / ORDER BY but not
+    window functions; the latter raise :class:`UnsupportedOperationError`
+    rather than a sqlglot internal exception.
+    """
+
+    from sqlglot import executor
+    from sqlglot.errors import ExecuteError
+
+    nrows = _row_count(columns)
+    rows = [{column: columns[column][i] for column in columns} for i in range(nrows)]
+    tables = {source_name: rows}
+
+    try:
+        result = executor.execute(query, tables=tables)
+    except ExecuteError as exc:
+        raise UnsupportedOperationError(
+            f"statistical_check(sql): sqlglot's executor could not run the query "
+            f"(window functions and some shapes are not supported): {exc}"
+        ) from exc
+
+    output_columns = tuple(result.columns)
+    return {
+        column: [row[index] for row in result.rows] for index, column in enumerate(output_columns)
+    }
 
 
 def _to_columns(frame: object) -> dict[str, list[Any]]:

@@ -113,6 +113,42 @@ def test_statistical_check_polars_equivalent_pipelines() -> None:
     assert statistical_check(left, right, fixture, framework="polars").equivalent
 
 
-def test_statistical_check_sql_is_rejected() -> None:
-    with pytest.raises(UnsupportedOperationError, match="query engine"):
+def test_statistical_check_sql_equivalent_queries() -> None:
+    fixture = {"uid": [1, 1, 2], "score": [1.0, 3.0, 5.0]}
+    left = "SELECT uid, AVG(score) AS score FROM events GROUP BY uid"
+    right = "SELECT uid, AVG(score) AS score FROM events WHERE 1 = 1 GROUP BY uid"
+    assert statistical_check(left, right, fixture, framework="sql", source_name="events").equivalent
+
+
+def test_statistical_check_sql_divergent_queries() -> None:
+    fixture = {"uid": [1, 1, 2], "score": [1.0, 3.0, 5.0]}
+    left = "SELECT uid, AVG(score) AS score FROM events GROUP BY uid"
+    right = "SELECT uid, SUM(score) AS score FROM events GROUP BY uid"
+    result = statistical_check(left, right, fixture, framework="sql", source_name="events")
+    assert not result.equivalent
+    assert "score" in result.detail
+
+
+def test_statistical_check_sql_window_function_is_rejected() -> None:
+    fixture = {"uid": [1, 2], "score": [1.0, 2.0]}
+    query = (
+        "SELECT uid, AVG(score) OVER (PARTITION BY uid ORDER BY score "
+        "ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS roll FROM events"
+    )
+    with pytest.raises(UnsupportedOperationError, match="window functions"):
+        statistical_check(query, query, fixture, framework="sql", source_name="events")
+
+
+def test_statistical_check_unknown_framework_is_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="not supported"):
+        statistical_check(lambda x: x, lambda x: x, {"a": [1]}, framework="duckdb")
+
+
+def test_statistical_check_pandas_with_non_callable_is_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="must be a callable"):
+        statistical_check("not a callable", "also not", {"a": [1]}, framework="pandas")
+
+
+def test_statistical_check_sql_with_non_string_is_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="SQL query string"):
         statistical_check(lambda x: x, lambda x: x, {"a": [1]}, framework="sql")
