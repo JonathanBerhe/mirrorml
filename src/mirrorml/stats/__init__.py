@@ -125,14 +125,14 @@ def statistical_check(
     """
 
     return compare_frames(
-        _run(left, fixture, framework, source_name=source_name),
-        _run(right, fixture, framework, source_name=source_name),
+        run_pipeline(left, fixture, framework, source_name=source_name),
+        run_pipeline(right, fixture, framework, source_name=source_name),
         rtol=rtol,
         atol=atol,
     )
 
 
-def _run(
+def run_pipeline(
     pipeline: object, fixture: object, framework: str, *, source_name: str = "input"
 ) -> dict[str, list[Any]]:
     columns = _to_columns(fixture)
