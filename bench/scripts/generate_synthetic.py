@@ -566,6 +566,85 @@ def _identity_pairs() -> Iterable[dict[str, Any]]:
     }
 
 
+def _udf_pairs() -> Iterable[dict[str, Any]]:
+    """UDF-comparison pairs exercising the pandas ``df.apply(...)`` tracer
+    and the diff classifier's Udf rule. The identity pair shares a callable
+    so the source-hashes match (diff empty); the divergent pair uses two
+    different callables (diff surfaces ``schema_drift`` with a "udf body
+    differs" detail).
+    """
+
+    events = [("uid", "int64"), ("score", "float64")]
+    double_src = (
+        "def _double(col):\n    return col * 2\n\ndef offline(df):\n    return df.apply(_double)\n"
+    )
+    triple_src = (
+        "def _triple(col):\n    return col * 3\n\ndef online(df):\n    return df.apply(_triple)\n"
+    )
+    double_src_online = (
+        "def _double(col):\n    return col * 2\n\ndef online(df):\n    return df.apply(_double)\n"
+    )
+    double_src_with_comments = (
+        "def _double(col):\n"
+        "    # multiply by two\n"
+        '    """Double the column."""\n'
+        "    return col * 2\n\n"
+        "def online(df):\n    return df.apply(_double)\n"
+    )
+
+    yield {
+        "name": "identity_udf_apply",
+        "category": "identity",
+        "description": (
+            "Both sides apply the same UDF body, formatted differently. "
+            "The libcst-norm-v1 source-hash collapses formatting / comments "
+            "/ docstrings, so the fingerprints match and diff is empty."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": double_src,
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "pandas",
+            "python_source": double_src_with_comments,
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [],
+    }
+
+    yield {
+        "name": "udf_body_mismatch",
+        "category": "schema_drift",
+        "description": (
+            "Offline applies a doubling UDF; online applies a tripling UDF. "
+            "Different source-hashes; diff surfaces schema_drift with a "
+            "'udf body differs' detail. The statistical companion check is "
+            "the right way to upgrade the diagnosis to a value-level answer."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": double_src_online,
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "pandas",
+            "python_source": triple_src,
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [{"category": "schema_drift"}],
+        "expected_localization": [_loc("udf")],
+    }
+
+
 def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _identity_pairs()
     yield from _timezone_mismatch_pairs()
@@ -587,6 +666,7 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _adversarial_structure_pairs()
     yield from _adversarial_cosmetic_pairs()
     yield from _adversarial_multi_divergence_pairs()
+    yield from _udf_pairs()
 
 
 def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:

@@ -1,0 +1,30 @@
+name: identity_udf_apply
+bucket: synthetic
+category: identity
+description: Both sides apply the same UDF body, formatted differently. The libcst-norm-v1
+  source-hash collapses formatting / comments / docstrings, so the fingerprints match
+  and diff is empty.
+expected_divergences: []
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: pandas
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

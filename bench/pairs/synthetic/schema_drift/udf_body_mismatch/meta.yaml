@@ -1,0 +1,35 @@
+name: udf_body_mismatch
+bucket: synthetic
+category: schema_drift
+description: Offline applies a doubling UDF; online applies a tripling UDF. Different
+  source-hashes; diff surfaces schema_drift with a 'udf body differs' detail. The
+  statistical companion check is the right way to upgrade the diagnosis to a value-level
+  answer.
+expected_divergences:
+- category: schema_drift
+expected_localization:
+- op_kind: udf
+  side: both
+offline:
+  language: pandas
+  source: offline.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: pandas
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1
