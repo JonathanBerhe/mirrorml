@@ -61,6 +61,8 @@ def classify_dtype_difference(
 
     The mapping is:
 
+    * Same numeric base kind but different ``{measurement_unit}`` (e.g.
+      ``float64{meters}`` vs ``float64{feet}``) -> ``unit_mismatch``.
     * Both ``timestamp`` with different timezones -> ``timezone_mismatch``.
     * Same kind, different unit (``time`` / ``timestamp`` / ``duration``)
       -> ``rounding_precision``.
@@ -74,6 +76,24 @@ def classify_dtype_difference(
 
     left = parse_dtype(left_dtype)
     right = parse_dtype(right_dtype)
+
+    # Measurement-unit mismatch is checked before any other rule because
+    # the underlying numeric base may still match exactly (``float64`` ==
+    # ``float64``); we route to ``unit_mismatch`` rather than the generic
+    # ``type_coercion`` so the diagnostic names the right failure mode.
+    if (
+        left.kind == right.kind
+        and (left.bits, left.precision, left.scale) == (right.bits, right.precision, right.scale)
+        and left.measurement_unit != right.measurement_unit
+    ):
+        return Divergence(
+            category="unit_mismatch",
+            detail=(
+                f"column {column!r} ({location}): measurement unit "
+                f"{left.measurement_unit!r} vs {right.measurement_unit!r} "
+                f"({left_dtype} vs {right_dtype})"
+            ),
+        )
 
     if left.kind == "timestamp" and right.kind == "timestamp" and left.timezone != right.timezone:
         return Divergence(

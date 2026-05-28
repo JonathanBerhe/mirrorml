@@ -143,6 +143,40 @@ def test_type_coercion_int_widening() -> None:
     assert any(d.category == "type_coercion" for d in divs)
 
 
+# --- unit_mismatch -----------------------------------------------------------
+
+
+def test_unit_mismatch_meters_vs_feet() -> None:
+    a = trace_sql("SELECT x FROM t", schemas={"t": (("x", "float64{meters}"),)})
+    b = trace_sql("SELECT x FROM t", schemas={"t": (("x", "float64{feet}"),)})
+    divs = diff(a, b)
+    assert any(d.category == "unit_mismatch" for d in divs)
+    assert not any(d.category == "type_coercion" for d in divs)
+
+
+def test_unit_mismatch_does_not_fire_on_same_unit() -> None:
+    a = trace_sql("SELECT x FROM t", schemas={"t": (("x", "float64{meters}"),)})
+    b = trace_sql("SELECT x FROM t", schemas={"t": (("x", "float64{meters}"),)})
+    assert diff(a, b) == ()
+
+
+def test_unit_mismatch_one_side_unannotated() -> None:
+    """Annotation present on one side, absent on the other still counts:
+    the static fingerprint cannot prove they share the same unit."""
+
+    a = trace_sql("SELECT x FROM t", schemas={"t": (("x", "float64{USD}"),)})
+    b = trace_sql("SELECT x FROM t", schemas={"t": (("x", "float64"),)})
+    divs = diff(a, b)
+    assert any(d.category == "unit_mismatch" for d in divs)
+
+
+def test_unit_mismatch_on_decimal_carries_unit() -> None:
+    a = trace_sql("SELECT amount FROM t", schemas={"t": (("amount", "decimal[18, 2]{USD}"),)})
+    b = trace_sql("SELECT amount FROM t", schemas={"t": (("amount", "decimal[18, 2]{EUR}"),)})
+    divs = diff(a, b)
+    assert any(d.category == "unit_mismatch" for d in divs)
+
+
 # --- timezone_mismatch -------------------------------------------------------
 
 

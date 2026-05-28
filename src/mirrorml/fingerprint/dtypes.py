@@ -61,7 +61,9 @@ __all__ = [
     "is_numeric",
     "is_temporal",
     "is_timezone_aware",
+    "measurement_unit_of",
     "parse_dtype",
+    "strip_measurement_unit",
     "timezone_of",
     "unit_of",
     "validate_dtype",
@@ -69,6 +71,11 @@ __all__ = [
 
 _UNITS: Final[frozenset[str]] = frozenset({"s", "ms", "us", "ns"})
 _TIMEZONE_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_+/\-:]+$")
+_MEASUREMENT_UNIT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_/^.+\-]+$")
+"""Allowed characters for a measurement-unit annotation: alphanumerics,
+underscore, slash, caret, dot, plus, minus. Covers ``meters``, ``USD``,
+``kg/m^2``, ``m.s^-1`` etc. Whitespace and braces are disallowed by
+construction (the suffix is bracketed by ``{`` and ``}``)."""
 
 
 @dataclass(frozen=True)
@@ -106,6 +113,13 @@ class ParsedDtype:
     scale: int | None = None
     """Digit count after the decimal point for ``decimal``."""
 
+    measurement_unit: str | None = None
+    """Optional semantic unit annotation for numeric dtypes (``meters``,
+    ``USD``, ``kg/m^2``). Surfaced via the canonical-string suffix
+    ``{<unit>}`` (e.g. ``float64{meters}``). Two columns with the same
+    base dtype but different measurement units are flagged as
+    ``unit_mismatch`` by the diff classifier."""
+
 
 _SCALARS: Final[dict[str, ParsedDtype]] = {
     "null": ParsedDtype("null"),
@@ -140,6 +154,8 @@ def parse_dtype(s: str) -> ParsedDtype:
         'int'
         >>> parse_dtype("decimal[18, 2]").precision
         18
+        >>> parse_dtype("float64{meters}").measurement_unit
+        'meters'
 
     Raises:
         ValueError: For any string not in canonical form. The message
@@ -151,6 +167,67 @@ def parse_dtype(s: str) -> ParsedDtype:
             "dtype is empty; expected a canonical name (see docs/concepts/dtype_vocabulary.md)"
         )
 
+    measurement_unit, base = _split_measurement_unit(s)
+    parsed = _parse_base(base, original=s)
+    if measurement_unit is not None:
+        if parsed.kind not in ("int", "uint", "float", "decimal"):
+            raise ValueError(
+                f"dtype {s!r}: measurement-unit annotation `{{{measurement_unit}}}` "
+                f"is only valid on numeric base dtypes (int / uint / float / "
+                f"decimal); got base kind {parsed.kind!r}"
+            )
+        return _with_measurement_unit(parsed, measurement_unit)
+    return parsed
+
+
+def _split_measurement_unit(s: str) -> tuple[str | None, str]:
+    """Strip an optional ``{<unit>}`` suffix from ``s``. Returns
+    ``(unit, base_string)``; ``unit`` is ``None`` when no annotation is
+    present."""
+
+    if not s.endswith("}"):
+        return None, s
+    open_brace = s.rfind("{")
+    if open_brace == -1:
+        raise ValueError(
+            f"dtype {s!r} has an unmatched closing brace; expected the form "
+            f"`<base>{{<unit>}}` with both braces."
+        )
+    unit = s[open_brace + 1 : -1]
+    if not unit:
+        raise ValueError(
+            f"dtype {s!r}: measurement-unit annotation `{{}}` is empty; "
+            f"either drop the braces or name a unit."
+        )
+    if not _MEASUREMENT_UNIT_RE.fullmatch(unit):
+        raise ValueError(
+            f"dtype {s!r}: measurement unit {unit!r} contains invalid "
+            f"characters; allowed: alphanumerics, ``_ / ^ . + -``."
+        )
+    return unit, s[:open_brace]
+
+
+def _with_measurement_unit(parsed: ParsedDtype, unit: str) -> ParsedDtype:
+    """Return ``parsed`` with ``measurement_unit`` set. ``ParsedDtype`` is
+    frozen so we construct a fresh instance rather than mutating."""
+
+    return ParsedDtype(
+        kind=parsed.kind,
+        bits=parsed.bits,
+        unit=parsed.unit,
+        timezone=parsed.timezone,
+        element=parsed.element,
+        precision=parsed.precision,
+        scale=parsed.scale,
+        measurement_unit=unit,
+    )
+
+
+def _parse_base(s: str, *, original: str) -> ParsedDtype:
+    """Parse the dtype-without-unit-suffix portion of a canonical dtype
+    string. ``original`` is used purely for error messages so the caller
+    sees the full input rather than the stripped form."""
+
     cached = _SCALARS.get(s)
     if cached is not None:
         return cached
@@ -158,30 +235,31 @@ def parse_dtype(s: str) -> ParsedDtype:
     open_bracket = s.find("[")
     if open_bracket == -1:
         raise ValueError(
-            f"dtype {s!r} is not a recognized canonical name; "
+            f"dtype {original!r} is not a recognized canonical name; "
             f"see docs/concepts/dtype_vocabulary.md for the catalog"
         )
     if not s.endswith("]"):
         raise ValueError(
-            f"dtype {s!r} has an unmatched opening bracket; expected the form `kind[parameters]`"
+            f"dtype {original!r} has an unmatched opening bracket; expected "
+            f"the form `kind[parameters]`"
         )
 
     kind = s[:open_bracket]
     inner = s[open_bracket + 1 : -1]
 
     if kind == "time":
-        return _parse_time(inner, s)
+        return _parse_time(inner, original)
     if kind == "timestamp":
-        return _parse_timestamp(inner, s)
+        return _parse_timestamp(inner, original)
     if kind == "duration":
-        return _parse_duration(inner, s)
+        return _parse_duration(inner, original)
     if kind == "list":
         return ParsedDtype("list", element=parse_dtype(inner))
     if kind == "decimal":
-        return _parse_decimal(inner, s)
+        return _parse_decimal(inner, original)
 
     raise ValueError(
-        f"dtype {s!r}: unrecognized parameterized kind {kind!r}; "
+        f"dtype {original!r}: unrecognized parameterized kind {kind!r}; "
         f"valid kinds are: time, timestamp, duration, list, decimal"
     )
 
@@ -361,26 +439,62 @@ def bit_width(dtype: str) -> int | None:
     return None
 
 
+def measurement_unit_of(dtype: str) -> str | None:
+    """The measurement-unit annotation of ``dtype``, or ``None`` if absent.
+
+    Examples:
+        >>> measurement_unit_of("float64{meters}")
+        'meters'
+        >>> measurement_unit_of("float64") is None
+        True
+    """
+
+    return parse_dtype(dtype).measurement_unit
+
+
+def strip_measurement_unit(dtype: str) -> str:
+    """Return ``dtype`` with any ``{<unit>}`` suffix removed.
+
+    Useful when the classifier needs to compare base dtypes ignoring
+    measurement units (then compare the units separately).
+
+    Examples:
+        >>> strip_measurement_unit("float64{meters}")
+        'float64'
+        >>> strip_measurement_unit("float64")
+        'float64'
+    """
+
+    _, base = _split_measurement_unit(dtype)
+    return base
+
+
 def _serialize(parsed: ParsedDtype) -> str:
     """Reverse of :func:`parse_dtype`: render a :class:`ParsedDtype` as its
     canonical string. Used by :func:`element_dtype` to surface list element
     types without forcing callers to deal with the structured form."""
 
     if parsed.kind in ("null", "bool", "utf8", "binary", "date"):
-        return parsed.kind
-    if parsed.kind in ("int", "uint", "float"):
-        return f"{parsed.kind}{parsed.bits}"
-    if parsed.kind == "time":
-        return f"time[{parsed.unit}]"
-    if parsed.kind == "timestamp":
+        base = parsed.kind
+    elif parsed.kind in ("int", "uint", "float"):
+        base = f"{parsed.kind}{parsed.bits}"
+    elif parsed.kind == "time":
+        base = f"time[{parsed.unit}]"
+    elif parsed.kind == "timestamp":
         if parsed.timezone is not None:
-            return f"timestamp[{parsed.unit}, {parsed.timezone}]"
-        return f"timestamp[{parsed.unit}]"
-    if parsed.kind == "duration":
-        return f"duration[{parsed.unit}]"
-    if parsed.kind == "list":
+            base = f"timestamp[{parsed.unit}, {parsed.timezone}]"
+        else:
+            base = f"timestamp[{parsed.unit}]"
+    elif parsed.kind == "duration":
+        base = f"duration[{parsed.unit}]"
+    elif parsed.kind == "list":
         assert parsed.element is not None
-        return f"list[{_serialize(parsed.element)}]"
-    if parsed.kind == "decimal":
-        return f"decimal[{parsed.precision}, {parsed.scale}]"
-    raise AssertionError(f"unreachable: unknown kind {parsed.kind!r}")
+        base = f"list[{_serialize(parsed.element)}]"
+    elif parsed.kind == "decimal":
+        base = f"decimal[{parsed.precision}, {parsed.scale}]"
+    else:
+        raise AssertionError(f"unreachable: unknown kind {parsed.kind!r}")
+
+    if parsed.measurement_unit is not None:
+        return f"{base}{{{parsed.measurement_unit}}}"
+    return base

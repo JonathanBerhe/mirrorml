@@ -130,6 +130,56 @@ def test_parse_decimal() -> None:
     assert parsed.scale == 2
 
 
+# --- parser: measurement-unit annotation ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "dtype,unit",
+    [
+        ("float64{meters}", "meters"),
+        ("float32{USD}", "USD"),
+        ("int64{seconds}", "seconds"),
+        ("uint32{bytes}", "bytes"),
+        ("decimal[18, 2]{USD}", "USD"),
+        ("float64{kg/m^2}", "kg/m^2"),
+        ("float64{m.s^-1}", "m.s^-1"),
+    ],
+)
+def test_parse_measurement_unit(dtype: str, unit: str) -> None:
+    parsed = parse_dtype(dtype)
+    assert parsed.measurement_unit == unit
+
+
+def test_parse_dtype_without_unit_has_none() -> None:
+    assert parse_dtype("float64").measurement_unit is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "utf8{label}",  # only numeric base dtypes can carry a unit
+        "bool{flag}",
+        "timestamp[ns]{seconds}",  # already temporal
+        "float64{}",  # empty unit
+        "float64{has space}",  # invalid char (space)
+        "float64{a,b}",  # invalid char (comma)
+        "float64{",  # unmatched brace
+    ],
+)
+def test_parse_rejects_invalid_measurement_unit(bad: str) -> None:
+    with pytest.raises(ValueError):
+        parse_dtype(bad)
+
+
+def test_measurement_unit_helpers_round_trip() -> None:
+    from mirrorml.fingerprint.dtypes import measurement_unit_of, strip_measurement_unit
+
+    assert measurement_unit_of("float64{meters}") == "meters"
+    assert measurement_unit_of("float64") is None
+    assert strip_measurement_unit("float64{meters}") == "float64"
+    assert strip_measurement_unit("float64") == "float64"
+
+
 # --- parser: negative cases --------------------------------------------------
 
 

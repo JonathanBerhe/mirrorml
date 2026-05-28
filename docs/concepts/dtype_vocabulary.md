@@ -28,7 +28,9 @@ makes cross-framework precision possible.
 ## Grammar
 
 ```
-dtype       := scalar | parameterized | composite
+dtype       := base ("{" measurement_unit "}")?
+
+base        := scalar | parameterized | composite
 
 scalar      := "null"
              | "bool"
@@ -48,11 +50,20 @@ parameterized := "time" "[" unit "]"
 
 composite   := "list" "[" dtype "]"
 
-unit        := "s" | "ms" | "us" | "ns"
-timezone    := /[A-Za-z0-9_+/\-:]+/
-precision   := /[1-9][0-9]*/
-scale       := /0|[1-9][0-9]*/                 (where 0 ≤ scale ≤ precision)
+unit              := "s" | "ms" | "us" | "ns"
+timezone          := /[A-Za-z0-9_+/\-:]+/
+precision         := /[1-9][0-9]*/
+scale             := /0|[1-9][0-9]*/                 (where 0 ≤ scale ≤ precision)
+measurement_unit  := /[A-Za-z0-9_/^.+\-]+/           (only valid on numeric bases)
 ```
+
+The optional `{measurement_unit}` suffix attaches a free-form semantic
+unit (`meters`, `USD`, `kg/m^2`) to a numeric base dtype. Two columns
+sharing the same numeric base but a different measurement unit are flagged
+as `unit_mismatch` by the diff classifier. The annotation is whitespace-
+free and case-sensitive; comparison is exact-equality (no unit-conversion
+inference). Allowed only on `int*`, `uint*`, `float*`, and `decimal`
+bases; attaching it to `bool` / `utf8` / temporals raises at construction.
 
 Whitespace and case are **significant**. The canonical form is exactly
 what the grammar emits — no leading/trailing whitespace, no alternate
