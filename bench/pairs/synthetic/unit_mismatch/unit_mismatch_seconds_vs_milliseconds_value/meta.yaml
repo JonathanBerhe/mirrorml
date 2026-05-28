@@ -1,0 +1,26 @@
+name: unit_mismatch_seconds_vs_milliseconds_value
+bucket: synthetic
+category: unit_mismatch
+description: 'Elapsed time stored as int (not duration): seconds vs milliseconds.'
+expected_divergences:
+- category: unit_mismatch
+expected_localization:
+- op_kind: source
+  side: both
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    t:
+    - - x
+      - int64{seconds}
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    t:
+    - - x
+      - int64{milliseconds}
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

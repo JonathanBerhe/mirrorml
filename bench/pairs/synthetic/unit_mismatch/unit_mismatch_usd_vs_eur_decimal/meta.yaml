@@ -1,0 +1,26 @@
+name: unit_mismatch_usd_vs_eur_decimal
+bucket: synthetic
+category: unit_mismatch
+description: 'Money: USD vs EUR on decimal.'
+expected_divergences:
+- category: unit_mismatch
+expected_localization:
+- op_kind: source
+  side: both
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    t:
+    - - x
+      - decimal[18, 2]{USD}
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    t:
+    - - x
+      - decimal[18, 2]{EUR}
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

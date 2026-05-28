@@ -1,0 +1,26 @@
+name: unit_mismatch_kg_vs_lb
+bucket: synthetic
+category: unit_mismatch
+description: 'Mass: kg vs lb.'
+expected_divergences:
+- category: unit_mismatch
+expected_localization:
+- op_kind: source
+  side: both
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    t:
+    - - x
+      - float32{kg}
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    t:
+    - - x
+      - float32{lb}
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

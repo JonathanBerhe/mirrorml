@@ -1,0 +1,27 @@
+name: unit_mismatch_annotated_vs_unannotated
+bucket: synthetic
+category: unit_mismatch
+description: Offline declares USD; online is unannotated. The static fingerprint cannot
+  prove they agree, so unit_mismatch fires.
+expected_divergences:
+- category: unit_mismatch
+expected_localization:
+- op_kind: source
+  side: both
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    t:
+    - - x
+      - float64{USD}
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    t:
+    - - x
+      - float64
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

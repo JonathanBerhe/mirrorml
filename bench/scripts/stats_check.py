@@ -28,6 +28,7 @@ from typing import Any
 import yaml
 
 from mirrorml.exceptions import UnsupportedOperationError
+from mirrorml.fingerprint.dtypes import strip_measurement_unit
 from mirrorml.fingerprint.operations import Source
 from mirrorml.stats import StatComparison, compare_frames, run_pipeline
 from mirrorml.tracers import trace_pandas, trace_polars
@@ -48,6 +49,9 @@ def generate_fixture(
 
 
 def _column(dtype: str, n_rows: int) -> list[Any]:
+    # Measurement-unit annotations are semantic-only; the fixture
+    # generator works off the base numeric dtype and ignores the unit.
+    dtype = strip_measurement_unit(dtype)
     if dtype in ("int64", "int32", "int16", "int8", "uint64", "uint32", "uint16", "uint8"):
         # Cycle through a small key space so group-by pairs see multiple
         # rows per key (SUM != AVG on groups of size > 1).

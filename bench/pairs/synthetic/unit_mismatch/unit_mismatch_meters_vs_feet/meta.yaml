@@ -1,0 +1,26 @@
+name: unit_mismatch_meters_vs_feet
+bucket: synthetic
+category: unit_mismatch
+description: 'Length: meters vs feet.'
+expected_divergences:
+- category: unit_mismatch
+expected_localization:
+- op_kind: source
+  side: both
+offline:
+  language: sql
+  source: offline.sql
+  schemas:
+    t:
+    - - x
+      - float64{meters}
+online:
+  language: sql
+  source: online.sql
+  schemas:
+    t:
+    - - x
+      - float64{feet}
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

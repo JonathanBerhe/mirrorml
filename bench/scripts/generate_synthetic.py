@@ -566,6 +566,63 @@ def _identity_pairs() -> Iterable[dict[str, Any]]:
     }
 
 
+def _unit_mismatch_pairs() -> Iterable[dict[str, Any]]:
+    """unit_mismatch pairs. Each side declares the same numeric base
+    dtype but a different ``{measurement_unit}`` annotation; the
+    classifier flags this as unit_mismatch rather than type_coercion
+    (the base dtype matches; only the semantic unit differs)."""
+
+    query = "SELECT x FROM t\n"
+    cases: list[tuple[str, str, str, str]] = [
+        ("meters_vs_feet", "float64{meters}", "float64{feet}", "Length: meters vs feet."),
+        (
+            "celsius_vs_fahrenheit",
+            "float64{celsius}",
+            "float64{fahrenheit}",
+            "Temperature: celsius vs fahrenheit.",
+        ),
+        (
+            "usd_vs_eur_decimal",
+            "decimal[18, 2]{USD}",
+            "decimal[18, 2]{EUR}",
+            "Money: USD vs EUR on decimal.",
+        ),
+        (
+            "kg_vs_lb",
+            "float32{kg}",
+            "float32{lb}",
+            "Mass: kg vs lb.",
+        ),
+        (
+            "seconds_vs_milliseconds_value",
+            "int64{seconds}",
+            "int64{milliseconds}",
+            "Elapsed time stored as int (not duration): seconds vs milliseconds.",
+        ),
+        (
+            "annotated_vs_unannotated",
+            "float64{USD}",
+            "float64",
+            (
+                "Offline declares USD; online is unannotated. The static "
+                "fingerprint cannot prove they agree, so unit_mismatch fires."
+            ),
+        ),
+    ]
+    for name, off_dtype, on_dtype, description in cases:
+        yield {
+            "name": f"unit_mismatch_{name}",
+            "category": "unit_mismatch",
+            "description": description,
+            "offline_sql": query,
+            "online_sql": query,
+            "offline_schemas": {"t": [("x", off_dtype)]},
+            "online_schemas": {"t": [("x", on_dtype)]},
+            "expected_divergences": [{"category": "unit_mismatch"}],
+            "expected_localization": [_loc("source")],
+        }
+
+
 def _udf_pairs() -> Iterable[dict[str, Any]]:
     """UDF-comparison pairs exercising the pandas ``df.apply(...)`` tracer
     and the diff classifier's Udf rule. The identity pair shares a callable
@@ -699,6 +756,7 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _adversarial_cosmetic_pairs()
     yield from _adversarial_multi_divergence_pairs()
     yield from _udf_pairs()
+    yield from _unit_mismatch_pairs()
 
 
 def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
