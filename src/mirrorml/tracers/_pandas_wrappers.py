@@ -28,7 +28,16 @@ from __future__ import annotations
 from typing import Any
 
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Aggregate, FillNa, Filter, Project, Sort, Source, Udf
+from mirrorml.fingerprint.operations import (
+    Aggregate,
+    FillNa,
+    Filter,
+    Project,
+    Sample,
+    Sort,
+    Source,
+    Udf,
+)
 from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta
 from mirrorml.tracers._trace_common import (
     TracePredicate,
@@ -439,6 +448,81 @@ class _TraceFrame:
             operations=self._operations,
             last_op_id=op_id,
         )
+
+    def sample(
+        self,
+        n: object = None,
+        *,
+        frac: object = None,
+        replace: object = False,
+        random_state: object = None,
+    ) -> _TraceFrame:
+        """Emit a :class:`Sample` op for ``df.sample(n=..., frac=...,
+        random_state=...)``.
+
+        Exactly one of ``n`` / ``frac`` is allowed; both ``None`` raises.
+        ``random_state`` is captured as :attr:`Sample.seed` so a different
+        seed (or one side pinning a seed while the other does not) routes
+        through the diff classifier as ``seed_mismatch``.
+        """
+
+        if n is not None and frac is not None:
+            raise UnsupportedOperationError(
+                "pandas tracer: df.sample(...) accepts n OR frac, not both."
+            )
+        if n is None and frac is None:
+            raise UnsupportedOperationError(
+                "pandas tracer: df.sample(...) needs either n or frac; "
+                "default no-arg sampling is non-reproducible by design and "
+                "not modeled here."
+            )
+        n_val = _validate_sample_n(n) if n is not None else None
+        frac_val = _validate_sample_frac(frac) if frac is not None else None
+        seed_val = _validate_sample_seed(random_state)
+        if not isinstance(replace, bool):
+            raise UnsupportedOperationError(
+                f"pandas tracer: df.sample(replace=...) must be a bool; "
+                f"got {type(replace).__name__}"
+            )
+        op_id = f"sample_{next_op_index(self._operations)}"
+        self._operations.append(
+            Sample(
+                op_id=op_id,
+                dependencies=(self._last_op_id,),
+                n=n_val,
+                fraction=frac_val,
+                seed=seed_val,
+                with_replacement=replace,
+            )
+        )
+        return _TraceFrame(
+            schema=dict(self._schema),
+            operations=self._operations,
+            last_op_id=op_id,
+        )
+
+
+def _validate_sample_n(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise UnsupportedOperationError(f"sample n must be a positive int; got {value!r}")
+    return value
+
+
+def _validate_sample_frac(value: object) -> float:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        raise UnsupportedOperationError(f"sample fraction must be a float in (0, 1]; got {value!r}")
+    fv = float(value)
+    if fv <= 0.0 or fv > 1.0:
+        raise UnsupportedOperationError(f"sample fraction must be in (0, 1]; got {fv}")
+    return fv
+
+
+def _validate_sample_seed(value: object) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise UnsupportedOperationError(f"sample seed must be an int or None; got {value!r}")
+    return value
 
 
 def _as_column_list(value: object, *, what: str) -> list[str]:

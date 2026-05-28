@@ -368,6 +368,68 @@ def test_apply_non_callable_is_rejected() -> None:
         trace_pandas(lambda df: df.apply("not a function"), input_schema=EVENTS, source_name="e")
 
 
+# --- sample (Sample) --------------------------------------------------------
+
+
+def test_sample_emits_sample_op_with_seed() -> None:
+    from mirrorml.fingerprint.operations import Sample
+
+    fp = trace_pandas(
+        lambda df: df.sample(n=2, random_state=42), input_schema=EVENTS, source_name="e"
+    )
+    samples = [op for op in fp.operations if isinstance(op, Sample)]
+    assert len(samples) == 1
+    assert samples[0].n == 2
+    assert samples[0].seed == 42
+    assert samples[0].fraction is None
+    assert samples[0].with_replacement is False
+
+
+def test_sample_same_seed_diffs_to_empty() -> None:
+    a = trace_pandas(
+        lambda df: df.sample(n=2, random_state=42), input_schema=EVENTS, source_name="e"
+    )
+    b = trace_pandas(
+        lambda df: df.sample(n=2, random_state=42), input_schema=EVENTS, source_name="e"
+    )
+    assert diff(a, b) == ()
+
+
+def test_sample_different_seed_surfaces_seed_mismatch() -> None:
+    a = trace_pandas(
+        lambda df: df.sample(n=2, random_state=42), input_schema=EVENTS, source_name="e"
+    )
+    b = trace_pandas(
+        lambda df: df.sample(n=2, random_state=7), input_schema=EVENTS, source_name="e"
+    )
+    divs = diff(a, b)
+    assert [d.category for d in divs] == ["seed_mismatch"]
+
+
+def test_sample_unpinned_seed_vs_pinned_is_seed_mismatch() -> None:
+    a = trace_pandas(
+        lambda df: df.sample(n=2, random_state=42), input_schema=EVENTS, source_name="e"
+    )
+    b = trace_pandas(lambda df: df.sample(n=2), input_schema=EVENTS, source_name="e")
+    divs = diff(a, b)
+    assert any(d.category == "seed_mismatch" for d in divs)
+
+
+def test_sample_requires_n_or_frac() -> None:
+    with pytest.raises(UnsupportedOperationError, match="either n or frac"):
+        trace_pandas(lambda df: df.sample(), input_schema=EVENTS, source_name="e")
+
+
+def test_sample_n_and_frac_together_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="n OR frac"):
+        trace_pandas(lambda df: df.sample(n=2, frac=0.5), input_schema=EVENTS, source_name="e")
+
+
+def test_sample_fraction_out_of_range_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match=r"\(0, 1\]"):
+        trace_pandas(lambda df: df.sample(frac=1.5), input_schema=EVENTS, source_name="e")
+
+
 # --- THE BIG ONE: cross-framework equivalence -------------------------------
 
 

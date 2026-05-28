@@ -33,6 +33,7 @@ from mirrorml.fingerprint.operations import (
     FillNa,
     Filter,
     Project,
+    Sample,
     Sort,
     Source,
     Udf,
@@ -485,6 +486,85 @@ class _TraceLazyFrame:
                 ref=ref,
                 input_columns=input_columns,
                 output_columns=output_columns,
+            )
+        )
+        return self._derive(dict(self._schema), op_id)
+
+    def sample(
+        self,
+        n: object = None,
+        *,
+        fraction: object = None,
+        with_replacement: object = False,
+        seed: object = None,
+        shuffle: object = False,
+    ) -> _TraceLazyFrame:
+        """Emit a :class:`Sample` op for ``lf.sample(n=..., fraction=...,
+        seed=...)``.
+
+        Mirrors the pandas tracer so a cross-framework identity sample
+        (same n / seed) fingerprints identically. Polars's ``shuffle``
+        parameter is informational and not modeled (the Sample op already
+        captures the seed; the shuffle bit does not affect which rows
+        end up in the sample, only their order within it).
+        """
+
+        del shuffle  # not modeled; sample identity is row-set, not row-order
+
+        if n is not None and fraction is not None:
+            raise UnsupportedOperationError(
+                "polars tracer: lf.sample(...) accepts n OR fraction, not both."
+            )
+        if n is None and fraction is None:
+            raise UnsupportedOperationError(
+                "polars tracer: lf.sample(...) needs either n or fraction; "
+                "default no-arg sampling is non-reproducible by design and "
+                "not modeled here."
+            )
+        n_val: int | None = None
+        frac_val: float | None = None
+        if n is not None:
+            if not isinstance(n, int) or isinstance(n, bool) or n <= 0:
+                raise UnsupportedOperationError(
+                    f"polars tracer: lf.sample(n=...) must be a positive int; got {n!r}"
+                )
+            n_val = n
+        if fraction is not None:
+            if not isinstance(fraction, int | float) or isinstance(fraction, bool):
+                raise UnsupportedOperationError(
+                    f"polars tracer: lf.sample(fraction=...) must be a float in (0, 1]; "
+                    f"got {fraction!r}"
+                )
+            fv = float(fraction)
+            if fv <= 0.0 or fv > 1.0:
+                raise UnsupportedOperationError(
+                    f"polars tracer: lf.sample(fraction=...) must be in (0, 1]; got {fv}"
+                )
+            frac_val = fv
+        seed_val: int | None
+        if seed is None:
+            seed_val = None
+        elif not isinstance(seed, int) or isinstance(seed, bool):
+            raise UnsupportedOperationError(
+                f"polars tracer: lf.sample(seed=...) must be an int or None; got {seed!r}"
+            )
+        else:
+            seed_val = seed
+        if not isinstance(with_replacement, bool):
+            raise UnsupportedOperationError(
+                f"polars tracer: lf.sample(with_replacement=...) must be a bool; "
+                f"got {type(with_replacement).__name__}"
+            )
+
+        op_id = f"sample_{next_op_index(self._operations)}"
+        self._operations.append(
+            Sample(
+                op_id=op_id,
+                dependencies=(self._last_op_id,),
+                n=n_val,
+                fraction=frac_val,
+                seed=seed_val,
+                with_replacement=with_replacement,
             )
         )
         return self._derive(dict(self._schema), op_id)

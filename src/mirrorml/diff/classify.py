@@ -249,6 +249,8 @@ def classify_op_pair(left: Operation, right: Operation) -> Iterator[Divergence]:
         yield from _classify_fill_na(left, right)
     elif kind == "udf":
         yield from _classify_udf(left, right)
+    elif kind == "sample":
+        yield from _classify_sample(left, right)
     else:
         yield Divergence(
             category="schema_drift",
@@ -317,6 +319,51 @@ def _classify_project(left: Operation, right: Operation) -> Iterator[Divergence]
             right_op_id=right.op_id,
             detail=(
                 f"project renames: {left.schema_delta.renamed} vs {right.schema_delta.renamed}"
+            ),
+        )
+
+
+def _classify_sample(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two :class:`~mirrorml.fingerprint.operations.Sample` ops.
+
+    A different seed (or one side pinning a seed while the other does
+    not) is a real reproducibility divergence: the offline pipeline
+    materializes one subset and the online pipeline materializes a
+    different one even on the same input. Routed to ``seed_mismatch``.
+
+    Different sample sizes (``n`` / ``fraction``) or ``with_replacement``
+    are surfaced as ``schema_drift`` because they change the *size* of
+    the downstream data rather than just its *identity*.
+    """
+
+    assert left.kind == "sample" and right.kind == "sample"
+
+    if left.seed != right.seed:
+        yield Divergence(
+            category="seed_mismatch",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"sample seed: {left.seed!r} vs {right.seed!r}",
+        )
+
+    if (left.n, left.fraction) != (right.n, right.fraction):
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"sample size: n={left.n!r} fraction={left.fraction!r} vs "
+                f"n={right.n!r} fraction={right.fraction!r}"
+            ),
+        )
+
+    if left.with_replacement != right.with_replacement:
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"sample with_replacement: {left.with_replacement} vs {right.with_replacement}"
             ),
         )
 

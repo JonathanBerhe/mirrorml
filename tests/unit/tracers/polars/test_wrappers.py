@@ -631,6 +631,45 @@ def test_cross_framework_pandas_apply_polars_map_batches_same_body_diffs_empty()
     assert diff(pandas_fp, polars_fp) == ()
 
 
+# --- sample (Sample) --------------------------------------------------------
+
+
+def test_polars_sample_emits_sample_op_with_seed() -> None:
+    from mirrorml.fingerprint.operations import Sample
+
+    fp = trace_polars(lambda lf, pl: lf.sample(n=2, seed=42), input_schema=EVENTS, source_name="e")
+    samples = [op for op in fp.operations if isinstance(op, Sample)]
+    assert len(samples) == 1
+    assert samples[0].n == 2
+    assert samples[0].seed == 42
+
+
+def test_polars_sample_different_seeds_surface_seed_mismatch() -> None:
+    a = trace_polars(lambda lf, pl: lf.sample(n=2, seed=42), input_schema=EVENTS, source_name="e")
+    b = trace_polars(lambda lf, pl: lf.sample(n=2, seed=7), input_schema=EVENTS, source_name="e")
+    divs = diff(a, b)
+    assert [d.category for d in divs] == ["seed_mismatch"]
+
+
+def test_cross_framework_pandas_sample_polars_sample_same_seed_diffs_empty() -> None:
+    """pandas df.sample(random_state=42) and polars lf.sample(seed=42) carry
+    the same seed; the Sample ops fingerprint identically across
+    frameworks."""
+
+    pandas_fp = trace_pandas(
+        lambda df: df.sample(n=2, random_state=42), input_schema=EVENTS, source_name="e"
+    )
+    polars_fp = trace_polars(
+        lambda lf, pl: lf.sample(n=2, seed=42), input_schema=EVENTS, source_name="e"
+    )
+    assert diff(pandas_fp, polars_fp) == ()
+
+
+def test_polars_sample_requires_n_or_fraction() -> None:
+    with pytest.raises(UnsupportedOperationError, match="either n or fraction"):
+        trace_polars(lambda lf, pl: lf.sample(), input_schema=EVENTS, source_name="e")
+
+
 # --- cross-framework equivalence (third framework) --------------------------
 
 
