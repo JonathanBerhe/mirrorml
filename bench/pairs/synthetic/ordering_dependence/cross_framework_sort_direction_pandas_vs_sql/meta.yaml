@@ -4,6 +4,9 @@ category: ordering_dependence
 description: pandas sorts score DESC; SQL sorts score ASC.
 expected_divergences:
 - category: ordering_dependence
+expected_localization:
+- op_kind: sort
+  side: both
 offline:
   language: pandas
   source: offline.py

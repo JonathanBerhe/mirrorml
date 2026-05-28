@@ -19,6 +19,9 @@ def _result(
     is_identity: bool = False,
     expected: tuple[str, ...] = (),
     predicted: tuple[str, ...] = (),
+    has_localization_target: bool = False,
+    localization_top1: bool = False,
+    localization_top3: bool = False,
 ) -> PairResult:
     return PairResult(
         name=name,
@@ -30,6 +33,9 @@ def _result(
         fp=fp,
         fn=fn,
         is_identity=is_identity,
+        has_localization_target=has_localization_target,
+        localization_top1=localization_top1,
+        localization_top3=localization_top3,
     )
 
 
@@ -145,6 +151,41 @@ def test_per_category_metrics_aggregate_within_category() -> None:
 
 
 import pytest  # noqa: E402  (kept at bottom so the helper above stays minimal)
+
+# --- localization aggregation -----------------------------------------------
+
+
+def test_localization_aggregation_counts_top1_and_top3() -> None:
+    results = [
+        _result(
+            name="hit", has_localization_target=True, localization_top1=True, localization_top3=True
+        ),
+        _result(
+            name="top3_only",
+            has_localization_target=True,
+            localization_top1=False,
+            localization_top3=True,
+        ),
+        _result(name="miss", has_localization_target=True),
+        _result(name="no_target"),  # untagged; excluded from denominator
+    ]
+    summary = aggregate(results)
+    loc = summary["localization"]
+    assert loc["pairs"] == 3
+    assert loc["top1"] == 1
+    assert loc["top3"] == 2
+    assert loc["top1_accuracy"] == pytest.approx(1 / 3)
+    assert loc["top3_accuracy"] == pytest.approx(2 / 3)
+
+
+def test_localization_block_empty_when_no_pairs_tagged() -> None:
+    results = [_result(name="untagged")]
+    summary = aggregate(results)
+    loc = summary["localization"]
+    assert loc["pairs"] == 0
+    assert loc["top1_accuracy"] == 0.0
+    assert loc["top3_accuracy"] == 0.0
+
 
 # --- CLI threshold flags ----------------------------------------------------
 
@@ -279,6 +320,103 @@ def test_threshold_flag_fails_when_precision_below_target(
             str(results_dir),
             "--fail-under-precision",
             "0.95",
+        ]
+    )
+    assert rc == 1
+
+
+def test_localization_threshold_passes_when_engine_localizes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Synthetic timezone pair with expected_localization=source: the
+    engine now attaches the Source op_id to input-schema divergences, so
+    top-1 should hit and the threshold should pass."""
+
+    pairs_root = tmp_path / "pairs"
+    results_dir = tmp_path / "results"
+    pair_dir = pairs_root / "synthetic" / "timezone_mismatch" / "tz_001"
+    pair_dir.mkdir(parents=True)
+    (pair_dir / "offline.sql").write_text("SELECT ts FROM events\n")
+    (pair_dir / "online.sql").write_text("SELECT ts FROM events\n")
+    meta = {
+        "name": "tz_001",
+        "bucket": "synthetic",
+        "category": "timezone_mismatch",
+        "description": "tz",
+        "expected_divergences": [{"category": "timezone_mismatch"}],
+        "expected_localization": [{"op_kind": "source", "side": "both"}],
+        "offline": {
+            "language": "sql",
+            "source": "offline.sql",
+            "schemas": {"events": [["ts", "timestamp[ns, UTC]"]]},
+        },
+        "online": {
+            "language": "sql",
+            "source": "online.sql",
+            "schemas": {"events": [["ts", "timestamp[ns, US/Pacific]"]]},
+        },
+    }
+    with (pair_dir / "meta.yaml").open("w") as f:
+        yaml.safe_dump(meta, f, sort_keys=False)
+    _patch_paths(monkeypatch, pairs_root=pairs_root, results_dir=results_dir)
+
+    rc = main(
+        [
+            "--quick",
+            "--out",
+            str(results_dir),
+            "--fail-under-localization-top1",
+            "0.75",
+        ]
+    )
+    assert rc == 0
+    with (results_dir / "synthetic.json").open() as f:
+        summary = json.load(f)
+    assert summary["localization"]["top1_accuracy"] == 1.0
+
+
+def test_localization_threshold_fails_when_kind_mismatched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pair whose meta.yaml claims the wrong responsible op_kind should
+    miss top-1, dragging the metric below the threshold."""
+
+    pairs_root = tmp_path / "pairs"
+    results_dir = tmp_path / "results"
+    pair_dir = pairs_root / "synthetic" / "timezone_mismatch" / "tz_001"
+    pair_dir.mkdir(parents=True)
+    (pair_dir / "offline.sql").write_text("SELECT ts FROM events\n")
+    (pair_dir / "online.sql").write_text("SELECT ts FROM events\n")
+    meta = {
+        "name": "tz_001",
+        "bucket": "synthetic",
+        "category": "timezone_mismatch",
+        "description": "tz",
+        "expected_divergences": [{"category": "timezone_mismatch"}],
+        # Deliberately wrong: the responsible op is the Source.
+        "expected_localization": [{"op_kind": "aggregate", "side": "both"}],
+        "offline": {
+            "language": "sql",
+            "source": "offline.sql",
+            "schemas": {"events": [["ts", "timestamp[ns, UTC]"]]},
+        },
+        "online": {
+            "language": "sql",
+            "source": "online.sql",
+            "schemas": {"events": [["ts", "timestamp[ns, US/Pacific]"]]},
+        },
+    }
+    with (pair_dir / "meta.yaml").open("w") as f:
+        yaml.safe_dump(meta, f, sort_keys=False)
+    _patch_paths(monkeypatch, pairs_root=pairs_root, results_dir=results_dir)
+
+    rc = main(
+        [
+            "--quick",
+            "--out",
+            str(results_dir),
+            "--fail-under-localization-top1",
+            "0.75",
         ]
     )
     assert rc == 1

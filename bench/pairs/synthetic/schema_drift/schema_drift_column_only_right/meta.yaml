@@ -4,6 +4,9 @@ category: schema_drift
 description: Offline projects uid; online projects uid + score.
 expected_divergences:
 - category: schema_drift
+expected_localization:
+- op_kind: project
+  side: both
 offline:
   language: sql
   source: offline.sql

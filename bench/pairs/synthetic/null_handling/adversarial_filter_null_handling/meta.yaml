@@ -5,6 +5,9 @@ description: Offline filters by IS NOT NULL; online uses a numeric threshold. Th
   predicate mentions NULL so the classifier routes to null_handling.
 expected_divergences:
 - category: null_handling
+expected_localization:
+- op_kind: filter
+  side: both
 offline:
   language: sql
   source: offline.sql

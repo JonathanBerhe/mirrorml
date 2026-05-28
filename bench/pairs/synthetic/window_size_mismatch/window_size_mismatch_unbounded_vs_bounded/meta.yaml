@@ -4,6 +4,9 @@ category: window_size_mismatch
 description: Offline cumulative (unbounded) mean; online 3-row trailing mean.
 expected_divergences:
 - category: window_size_mismatch
+expected_localization:
+- op_kind: window
+  side: both
 offline:
   language: sql
   source: offline.sql

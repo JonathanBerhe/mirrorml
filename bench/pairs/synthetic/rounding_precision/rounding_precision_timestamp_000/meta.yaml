@@ -4,6 +4,9 @@ category: rounding_precision
 description: Offline timestamp resolution 'ns'; online resolution 'us'.
 expected_divergences:
 - category: rounding_precision
+expected_localization:
+- op_kind: source
+  side: both
 offline:
   language: sql
   source: offline.sql

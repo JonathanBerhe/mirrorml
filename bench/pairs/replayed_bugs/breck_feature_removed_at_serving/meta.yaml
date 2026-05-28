@@ -9,6 +9,9 @@ description: >
 postmortem_url: https://proceedings.mlsys.org/paper_files/paper/2019/hash/928f1160e52192e3e0017fb63ab65391-Abstract.html
 expected_divergences:
   - category: schema_drift
+expected_localization:
+  - op_kind: project
+    side: both
 offline:
   language: sql
   source: offline.sql

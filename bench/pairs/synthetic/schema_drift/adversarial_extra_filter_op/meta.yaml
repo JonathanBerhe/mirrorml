@@ -5,6 +5,9 @@ description: Online has an extra WHERE filter that offline lacks. Length mismatc
   surfaces as schema_drift.
 expected_divergences:
 - category: schema_drift
+expected_localization:
+- op_kind: filter
+  side: online
 offline:
   language: sql
   source: offline.sql

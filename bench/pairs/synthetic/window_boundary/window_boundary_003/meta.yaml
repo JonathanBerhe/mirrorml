@@ -4,6 +4,9 @@ category: window_boundary
 description: Offline rolling window closed='right'; online closed='none'.
 expected_divergences:
 - category: window_boundary
+expected_localization:
+- op_kind: window
+  side: both
 offline:
   language: polars
   source: offline.py

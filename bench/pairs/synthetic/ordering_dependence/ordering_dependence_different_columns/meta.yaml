@@ -4,6 +4,9 @@ category: ordering_dependence
 description: Offline orders by uid; online orders by score.
 expected_divergences:
 - category: ordering_dependence
+expected_localization:
+- op_kind: sort
+  side: both
 offline:
   language: sql
   source: offline.sql

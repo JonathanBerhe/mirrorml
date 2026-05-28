@@ -4,6 +4,9 @@ category: type_coercion
 description: Offline x dtype 'int64'; online x dtype 'float64'.
 expected_divergences:
 - category: type_coercion
+expected_localization:
+- op_kind: source
+  side: both
 offline:
   language: sql
   source: offline.sql

@@ -5,6 +5,9 @@ description: Offline aggregates score with COUNT; online uses SUM.
 expected_divergences:
 - category: aggregation_function
 - category: type_coercion
+expected_localization:
+- op_kind: aggregate
+  side: both
 offline:
   language: sql
   source: offline.sql

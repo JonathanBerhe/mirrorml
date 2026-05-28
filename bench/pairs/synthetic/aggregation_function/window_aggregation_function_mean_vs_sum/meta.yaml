@@ -4,6 +4,9 @@ category: aggregation_function
 description: Same trailing window; offline averages, online sums.
 expected_divergences:
 - category: aggregation_function
+expected_localization:
+- op_kind: window
+  side: both
 offline:
   language: sql
   source: offline.sql

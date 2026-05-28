@@ -4,6 +4,9 @@ category: join_key_mismatch
 description: Offline joins on k1; online joins on k2.
 expected_divergences:
 - category: join_key_mismatch
+expected_localization:
+- op_kind: join
+  side: both
 offline:
   language: sql
   source: offline.sql

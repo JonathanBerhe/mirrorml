@@ -4,6 +4,9 @@ category: ordering_dependence
 description: Same column, opposite directions.
 expected_divergences:
 - category: ordering_dependence
+expected_localization:
+- op_kind: sort
+  side: both
 offline:
   language: sql
   source: offline.sql

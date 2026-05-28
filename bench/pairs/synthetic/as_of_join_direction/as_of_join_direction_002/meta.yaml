@@ -4,6 +4,9 @@ category: as_of_join_direction
 description: Offline as-of join 'forward'; online 'nearest'.
 expected_divergences:
 - category: as_of_join_direction
+expected_localization:
+- op_kind: as_of_join
+  side: both
 offline:
   language: polars
   source: offline.py

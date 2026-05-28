@@ -4,6 +4,9 @@ category: aggregation_function
 description: Offline aggregates score with MIN; online uses MAX.
 expected_divergences:
 - category: aggregation_function
+expected_localization:
+- op_kind: aggregate
+  side: both
 offline:
   language: sql
   source: offline.sql

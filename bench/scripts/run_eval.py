@@ -29,6 +29,8 @@ from bench.scripts.pair import Pair, discover_pairs, load_pair
 from bench.scripts.stats_check import statistically_check_pair
 from mirrorml import diff
 from mirrorml._taxonomy import DIVERGENCE_CATEGORIES
+from mirrorml.cli._pair import ExpectedLocalization
+from mirrorml.fingerprint.schema import Fingerprint
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PAIRS_ROOT = REPO_ROOT / "bench" / "pairs"
@@ -62,6 +64,25 @@ class PairResult:
     # to "skipped" so callers constructing PairResult by hand are unaffected.
     stats_status: str = "skipped"
     stats_detail: str = ""
+    # Localization scoring (PAPER.md Table 3 / CLAUDE.md "top-1 >= 0.75"). A
+    # pair contributes to the localization metric only when meta.yaml
+    # declared an ``expected_localization``; identity pairs and untagged
+    # pairs are skipped. ``top1`` is true iff the first reported divergence
+    # localizes to an expected op_kind on the expected side; ``top3``
+    # generalizes to the first three.
+    #
+    # NOTE: this metric is scored over all *tagged* pairs, not pairs that
+    # produced at least one divergence. When recall fails (diff() returns
+    # ``()`` for a tagged pair), top-1 records ``False`` -- which is a
+    # second strike for the same engine miss that recall already counted.
+    # That's defensible (the user sees nothing in the first slot, which is
+    # an honest top-1 miss), but it means the localization number is best
+    # read alongside recall, not in isolation. When the real_world bucket
+    # lands and recall drops below 1.0, a "localization-given-recall"
+    # variant may be the more informative paper number.
+    has_localization_target: bool = False
+    localization_top1: bool = False
+    localization_top3: bool = False
 
 
 def evaluate_pair(pair: Pair) -> PairResult:
@@ -91,6 +112,24 @@ def evaluate_pair(pair: Pair) -> PairResult:
         stats_status = "not_equivalent"
         stats_detail = stats_result.detail
 
+    has_loc_target = bool(pair.expected_localization)
+    top1 = False
+    top3 = False
+    if has_loc_target:
+        offline_kinds = _op_kinds_by_id(pair.offline)
+        online_kinds = _op_kinds_by_id(pair.online)
+        predicted_kind_pairs = [
+            (
+                offline_kinds.get(d.left_op_id) if d.left_op_id is not None else None,
+                online_kinds.get(d.right_op_id) if d.right_op_id is not None else None,
+            )
+            for d in divergences
+        ]
+        top1 = bool(predicted_kind_pairs) and _matches_any(
+            predicted_kind_pairs[0], pair.expected_localization
+        )
+        top3 = any(_matches_any(p, pair.expected_localization) for p in predicted_kind_pairs[:3])
+
     return PairResult(
         name=pair.name,
         bucket=pair.bucket,
@@ -103,7 +142,37 @@ def evaluate_pair(pair: Pair) -> PairResult:
         is_identity=is_identity,
         stats_status=stats_status,
         stats_detail=stats_detail,
+        has_localization_target=has_loc_target,
+        localization_top1=top1,
+        localization_top3=top3,
     )
+
+
+def _op_kinds_by_id(fp: Fingerprint) -> dict[str, str]:
+    """Map ``op_id`` -> op ``kind`` for one fingerprint, so divergences can
+    be resolved to their structural op kind without re-walking the DAG."""
+
+    return {op.op_id: op.kind for op in fp.operations}
+
+
+def _matches_any(
+    predicted: tuple[str | None, str | None],
+    expected: tuple[ExpectedLocalization, ...],
+) -> bool:
+    """True iff any expected-localization row matches the predicted op-kind
+    pair (offline_kind, online_kind). ``side="both"`` requires both kinds to
+    match the expected op_kind; ``side="offline"`` checks the offline kind
+    only and ``side="online"`` checks the online kind only."""
+
+    offline_kind, online_kind = predicted
+    for e in expected:
+        if e.side == "both" and offline_kind == e.op_kind and online_kind == e.op_kind:
+            return True
+        if e.side == "offline" and offline_kind == e.op_kind:
+            return True
+        if e.side == "online" and online_kind == e.op_kind:
+            return True
+    return False
 
 
 def _safe_div(num: float, den: float) -> float:
@@ -163,6 +232,10 @@ def aggregate(results: list[PairResult]) -> dict[str, Any]:
         and bool(r.predicted_categories) == (r.stats_status == "not_equivalent")
     )
 
+    loc_pairs = [r for r in results if r.has_localization_target]
+    loc_top1 = sum(1 for r in loc_pairs if r.localization_top1)
+    loc_top3 = sum(1 for r in loc_pairs if r.localization_top3)
+
     return {
         "headline": {
             "pairs": len(results),
@@ -186,6 +259,13 @@ def aggregate(results: list[PairResult]) -> dict[str, Any]:
             "agreed_with_static": stats_agreed,
             "agreement_rate": _safe_div(stats_agreed, stats_runnable),
         },
+        "localization": {
+            "pairs": len(loc_pairs),
+            "top1": loc_top1,
+            "top3": loc_top3,
+            "top1_accuracy": _safe_div(loc_top1, len(loc_pairs)),
+            "top3_accuracy": _safe_div(loc_top3, len(loc_pairs)),
+        },
         "by_category": category_metrics,
         "by_pair": [
             {
@@ -197,6 +277,11 @@ def aggregate(results: list[PairResult]) -> dict[str, Any]:
                 "fp": r.fp,
                 "fn": r.fn,
                 "stats": {"status": r.stats_status, "detail": r.stats_detail},
+                "localization": {
+                    "has_target": r.has_localization_target,
+                    "top1": r.localization_top1,
+                    "top3": r.localization_top3,
+                },
             }
             for r in results
         ],
@@ -250,6 +335,17 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--fail-under-localization-top1",
+        type=float,
+        default=None,
+        metavar="L",
+        help=(
+            "Exit non-zero if any evaluated bucket's localization top-1 "
+            "accuracy is below L. Only applied to buckets with at least "
+            "one localization-tagged pair (target 0.75 per CLAUDE.md)."
+        ),
+    )
+    parser.add_argument(
         "--github-step-summary",
         type=Path,
         default=None,
@@ -284,11 +380,14 @@ def main(argv: list[str] | None = None) -> int:
             f.write("\n")
         head = summary["headline"]
         stats = summary["stats"]
+        loc = summary["localization"]
         print(
             f"[{bucket}] pairs={head['pairs']} "
             f"precision={head['precision']:.3f} "
             f"recall={head['recall']:.3f} "
             f"f1={head['f1']:.3f} "
+            f"loc_top1={loc['top1']}/{loc['pairs']} "
+            f"loc_top3={loc['top3']}/{loc['pairs']} "
             f"stats_agreed={stats['agreed_with_static']}/{stats['runnable']} "
             f"(skipped={stats['skipped']}) "
             f"-> {out_path.relative_to(REPO_ROOT)}"
@@ -326,6 +425,17 @@ def main(argv: list[str] | None = None) -> int:
             )
             overall_failed = True
 
+        if (
+            args.fail_under_localization_top1 is not None
+            and loc["pairs"] > 0
+            and loc["top1_accuracy"] < args.fail_under_localization_top1
+        ):
+            failures.append(
+                f"[{bucket}] localization top-1 {loc['top1_accuracy']:.3f} < "
+                f"threshold {args.fail_under_localization_top1:.3f}"
+            )
+            overall_failed = True
+
     if args.github_step_summary is not None:
         _write_step_summary(args.github_step_summary, bucket_summaries, failures)
 
@@ -345,14 +455,17 @@ def _write_step_summary(
     lines: list[str] = []
     lines.append("## MirrorBench")
     lines.append("")
-    lines.append("| Bucket | Pairs | Precision | Recall | F1 |")
-    lines.append("|---|---:|---:|---:|---:|")
+    lines.append("| Bucket | Pairs | Precision | Recall | F1 | Loc top-1 | Loc top-3 |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|")
     for bucket, summary in summaries:
         head = summary["headline"]
+        loc = summary["localization"]
+        loc_top1 = f"{loc['top1']}/{loc['pairs']}" if loc["pairs"] else "n/a"
+        loc_top3 = f"{loc['top3']}/{loc['pairs']}" if loc["pairs"] else "n/a"
         lines.append(
             f"| `{bucket}` | {head['pairs']} | "
             f"{head['precision']:.3f} | {head['recall']:.3f} | "
-            f"{head['f1']:.3f} |"
+            f"{head['f1']:.3f} | {loc_top1} | {loc_top3} |"
         )
     if failures:
         lines.append("")

@@ -12,6 +12,9 @@ description: >
 postmortem_url: https://arxiv.org/abs/2510.26788
 expected_divergences:
   - category: type_coercion
+expected_localization:
+  - op_kind: source
+    side: both
 offline:
   language: sql
   source: offline.sql

@@ -4,6 +4,9 @@ category: window_size_mismatch
 description: Offline rolling mean over 5 rows; online over 10 rows.
 expected_divergences:
 - category: window_size_mismatch
+expected_localization:
+- op_kind: window
+  side: both
 offline:
   language: sql
   source: offline.sql

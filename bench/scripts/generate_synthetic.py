@@ -35,6 +35,14 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SYNTHETIC_DIR = REPO_ROOT / "bench" / "pairs" / "synthetic"
 
+
+def _loc(op_kind: str, side: str = "both") -> dict[str, str]:
+    """One expected-localization row. Names the responsible op kind on
+    each side (defaults to both, the common case)."""
+
+    return {"op_kind": op_kind, "side": side}
+
+
 # A "pair spec" is an in-memory description; the generator materializes
 # it as a directory of files. Spec shape:
 #
@@ -70,6 +78,7 @@ def _timezone_mismatch_pairs() -> Iterable[dict[str, Any]]:
             "offline_schemas": {"events": [("ts", f"timestamp[ns, {off_tz}]")]},
             "online_schemas": {"events": [("ts", f"timestamp[ns, {on_tz}]")]},
             "expected_divergences": [{"category": "timezone_mismatch"}],
+            "expected_localization": [_loc("source")],
         }
 
 
@@ -92,6 +101,7 @@ def _rounding_precision_pairs() -> Iterable[dict[str, Any]]:
             "offline_schemas": {"events": [("ts", f"timestamp[{off_unit}, UTC]")]},
             "online_schemas": {"events": [("ts", f"timestamp[{on_unit}, UTC]")]},
             "expected_divergences": [{"category": "rounding_precision"}],
+            "expected_localization": [_loc("source")],
         }
 
     decimal_cases = [
@@ -111,6 +121,7 @@ def _rounding_precision_pairs() -> Iterable[dict[str, Any]]:
             "offline_schemas": {"transactions": [("amount", f"decimal[{off[0]}, {off[1]}]")]},
             "online_schemas": {"transactions": [("amount", f"decimal[{on[0]}, {on[1]}]")]},
             "expected_divergences": [{"category": "rounding_precision"}],
+            "expected_localization": [_loc("source")],
         }
 
 
@@ -132,6 +143,7 @@ def _type_coercion_pairs() -> Iterable[dict[str, Any]]:
             "offline_schemas": {"t": [("x", off)]},
             "online_schemas": {"t": [("x", on)]},
             "expected_divergences": [{"category": "type_coercion"}],
+            "expected_localization": [_loc("source")],
         }
 
 
@@ -146,6 +158,7 @@ def _schema_drift_pairs() -> Iterable[dict[str, Any]]:
         "offline_schemas": {"events": schema},
         "online_schemas": {"events": schema},
         "expected_divergences": [{"category": "schema_drift"}],
+        "expected_localization": [_loc("project")],
     }
     yield {
         "name": "schema_drift_column_only_right",
@@ -156,6 +169,7 @@ def _schema_drift_pairs() -> Iterable[dict[str, Any]]:
         "offline_schemas": {"events": schema},
         "online_schemas": {"events": schema},
         "expected_divergences": [{"category": "schema_drift"}],
+        "expected_localization": [_loc("project")],
     }
     yield {
         "name": "schema_drift_rename",
@@ -166,6 +180,7 @@ def _schema_drift_pairs() -> Iterable[dict[str, Any]]:
         "offline_schemas": {"events": schema},
         "online_schemas": {"events": schema},
         "expected_divergences": [{"category": "schema_drift"}],
+        "expected_localization": [_loc("project")],
     }
 
 
@@ -193,6 +208,7 @@ def _aggregation_function_pairs() -> Iterable[dict[str, Any]]:
             "offline_schemas": {"events": schema},
             "online_schemas": {"events": schema},
             "expected_divergences": [{"category": c} for c in expected_categories],
+            "expected_localization": [_loc("aggregate")],
         }
 
 
@@ -208,6 +224,7 @@ def _join_key_mismatch_pairs() -> Iterable[dict[str, Any]]:
         "offline_schemas": {"a": left, "b": right},
         "online_schemas": {"a": left, "b": right},
         "expected_divergences": [{"category": "join_key_mismatch"}],
+        "expected_localization": [_loc("join")],
     }
     yield {
         "name": "join_key_mismatch_extra_key",
@@ -218,6 +235,7 @@ def _join_key_mismatch_pairs() -> Iterable[dict[str, Any]]:
         "offline_schemas": {"a": left, "b": right},
         "online_schemas": {"a": left, "b": right},
         "expected_divergences": [{"category": "join_key_mismatch"}],
+        "expected_localization": [_loc("join")],
     }
 
 
@@ -232,6 +250,7 @@ def _ordering_dependence_pairs() -> Iterable[dict[str, Any]]:
         "offline_schemas": {"events": schema},
         "online_schemas": {"events": schema},
         "expected_divergences": [{"category": "ordering_dependence"}],
+        "expected_localization": [_loc("sort")],
     }
     yield {
         "name": "ordering_dependence_asc_vs_desc",
@@ -242,6 +261,7 @@ def _ordering_dependence_pairs() -> Iterable[dict[str, Any]]:
         "offline_schemas": {"events": schema},
         "online_schemas": {"events": schema},
         "expected_divergences": [{"category": "ordering_dependence"}],
+        "expected_localization": [_loc("sort")],
     }
 
 
@@ -287,6 +307,7 @@ def _window_function_pairs() -> Iterable[dict[str, Any]]:
             "offline_schemas": {"events": schema},
             "online_schemas": {"events": schema},
             "expected_divergences": [{"category": "window_size_mismatch"}],
+            "expected_localization": [_loc("window")],
         }
 
     yield {
@@ -298,6 +319,7 @@ def _window_function_pairs() -> Iterable[dict[str, Any]]:
         "offline_schemas": {"events": schema},
         "online_schemas": {"events": schema},
         "expected_divergences": [{"category": "window_size_mismatch"}],
+        "expected_localization": [_loc("window")],
     }
 
     yield {
@@ -309,6 +331,7 @@ def _window_function_pairs() -> Iterable[dict[str, Any]]:
         "offline_schemas": {"events": schema},
         "online_schemas": {"events": schema},
         "expected_divergences": [{"category": "aggregation_function"}],
+        "expected_localization": [_loc("window")],
     }
 
 
@@ -375,6 +398,7 @@ def _window_boundary_pairs() -> Iterable[dict[str, Any]]:
                 "source_name": "events",
             },
             "expected_divergences": [{"category": "window_boundary"}],
+            "expected_localization": [_loc("window")],
         }
 
 
@@ -440,6 +464,7 @@ def _as_of_join_pairs() -> Iterable[dict[str, Any]]:
                 "source_name": "events",
             },
             "expected_divergences": [{"category": "as_of_join_direction"}],
+            "expected_localization": [_loc("as_of_join")],
         }
 
 
@@ -492,6 +517,7 @@ def _fill_na_pairs() -> Iterable[dict[str, Any]]:
                 "source_name": "events",
             },
             "expected_divergences": [{"category": "null_handling"}],
+            "expected_localization": [_loc("fill_na")],
         }
 
 
@@ -576,7 +602,7 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
     if "offline" in spec and "online" in spec:
         return spec
 
-    return {
+    out: dict[str, Any] = {
         "name": spec["name"],
         "category": spec["category"],
         "description": spec["description"],
@@ -592,6 +618,9 @@ def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
         },
         "expected_divergences": spec["expected_divergences"],
     }
+    if "expected_localization" in spec:
+        out["expected_localization"] = spec["expected_localization"]
+    return out
 
 
 def _write_side(target: Path, side: dict[str, Any], *, side_label: str) -> dict[str, Any]:
@@ -628,18 +657,20 @@ def _write_pair(target: Path, spec: dict[str, Any]) -> None:
     meta_offline = _write_side(target, spec["offline"], side_label="offline")
     meta_online = _write_side(target, spec["online"], side_label="online")
 
-    meta = {
+    meta: dict[str, Any] = {
         "name": spec["name"],
         "bucket": "synthetic",
         "category": spec["category"],
         "description": spec["description"],
         "expected_divergences": spec["expected_divergences"],
-        "offline": meta_offline,
-        "online": meta_online,
-        "generator": {
-            "module": "bench.scripts.generate_synthetic",
-            "version": 1,
-        },
+    }
+    if spec.get("expected_localization"):
+        meta["expected_localization"] = spec["expected_localization"]
+    meta["offline"] = meta_offline
+    meta["online"] = meta_online
+    meta["generator"] = {
+        "module": "bench.scripts.generate_synthetic",
+        "version": 1,
     }
     with (target / "meta.yaml").open("w") as f:
         yaml.safe_dump(meta, f, sort_keys=False)
@@ -754,6 +785,7 @@ def _cross_framework_divergence_pairs() -> Iterable[dict[str, Any]]:
             "schemas": {"events": events},
         },
         "expected_divergences": [{"category": "aggregation_function"}],
+        "expected_localization": [_loc("aggregate")],
     }
 
     events_utc = [("uid", "int64"), ("ts", "timestamp[ns, UTC]")]
@@ -779,6 +811,7 @@ def _cross_framework_divergence_pairs() -> Iterable[dict[str, Any]]:
             "schemas": {"events": events_pt},
         },
         "expected_divergences": [{"category": "timezone_mismatch"}],
+        "expected_localization": [_loc("source")],
     }
 
 
@@ -830,6 +863,7 @@ def _cross_framework_sort_pairs() -> Iterable[dict[str, Any]]:
             "schemas": {"events": events},
         },
         "expected_divergences": [{"category": "ordering_dependence"}],
+        "expected_localization": [_loc("sort")],
     }
 
 
@@ -934,6 +968,7 @@ def _cross_framework_polars_pairs() -> Iterable[dict[str, Any]]:
             "schemas": {"events": events},
         },
         "expected_divergences": [{"category": "aggregation_function"}],
+        "expected_localization": [_loc("aggregate")],
     }
 
 
@@ -970,6 +1005,7 @@ def _adversarial_predicate_pairs() -> Iterable[dict[str, Any]]:
             "schemas": {"events": events},
         },
         "expected_divergences": [{"category": "schema_drift"}],
+        "expected_localization": [_loc("filter")],
     }
 
     yield {
@@ -991,6 +1027,7 @@ def _adversarial_predicate_pairs() -> Iterable[dict[str, Any]]:
             "schemas": {"events": events},
         },
         "expected_divergences": [{"category": "null_handling"}],
+        "expected_localization": [_loc("filter")],
     }
 
 
@@ -1018,6 +1055,7 @@ def _adversarial_structure_pairs() -> Iterable[dict[str, Any]]:
             "schemas": {"events": events},
         },
         "expected_divergences": [{"category": "schema_drift"}],
+        "expected_localization": [_loc("filter", side="online")],
     }
 
 
@@ -1084,6 +1122,7 @@ def _adversarial_multi_divergence_pairs() -> Iterable[dict[str, Any]]:
             {"category": "timezone_mismatch"},
             {"category": "type_coercion"},
         ],
+        "expected_localization": [_loc("source")],
     }
 
 

@@ -4,6 +4,9 @@ category: timezone_mismatch
 description: pandas reads events.ts as UTC; SQL as US/Pacific.
 expected_divergences:
 - category: timezone_mismatch
+expected_localization:
+- op_kind: source
+  side: both
 offline:
   language: pandas
   source: offline.py

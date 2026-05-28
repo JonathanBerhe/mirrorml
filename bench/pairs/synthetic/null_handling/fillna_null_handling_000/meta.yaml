@@ -4,6 +4,9 @@ category: null_handling
 description: Offline fills score's nulls with 0; online with -1.
 expected_divergences:
 - category: null_handling
+expected_localization:
+- op_kind: fill_na
+  side: both
 offline:
   language: pandas
   source: offline.py

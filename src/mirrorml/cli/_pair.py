@@ -22,6 +22,12 @@ contract, not a stable public surface.
       Offline reads events with UTC timestamps; online reads with US/Pacific.
     expected_divergences:
       - category: timezone_mismatch
+    expected_localization:              # optional; for paper Table 3 (top-1 / top-3)
+      - op_kind: source                 # one of: source / filter / project /
+        side: both                      #         aggregate / join / as_of_join /
+                                        #         window / sort / fill_na / cast /
+                                        #         encode / udf
+                                        # side is one of: both / offline / online
     offline:
       language: sql                    # sql | pandas | polars
       source: offline.sql              # filename relative to pair dir
@@ -48,12 +54,33 @@ import importlib.util
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 import yaml
 
-from mirrorml.fingerprint.schema import Fingerprint
+from mirrorml.fingerprint.schema import Fingerprint, Operation
 from mirrorml.tracers import trace_pandas, trace_polars, trace_sql
+
+LocalizationSide = Literal["both", "offline", "online"]
+
+
+def _derive_op_kinds() -> frozenset[str]:
+    """Derive the set of valid op kinds from the discriminated
+    :data:`mirrorml.fingerprint.schema.Operation` union, so this module
+    cannot silently drift when a new Operation subclass is added.
+
+    ``Operation`` is ``Annotated[Source | Filter | ..., Field(...)]``;
+    unwrapping once gives the union and a second ``get_args`` gives the
+    concrete classes. Each class's ``kind`` field is a Literal whose
+    default is its discriminator value.
+    """
+
+    union_member = get_args(Operation)[0]
+    classes = get_args(union_member)
+    return frozenset(cls.model_fields["kind"].default for cls in classes)
+
+
+_OP_KINDS: frozenset[str] = _derive_op_kinds()
 
 
 @dataclass(frozen=True)
@@ -70,6 +97,22 @@ class ExpectedDivergence:
 
 
 @dataclass(frozen=True)
+class ExpectedLocalization:
+    """One row of the expected-localization list in ``meta.yaml``.
+
+    Names the responsible op kind on the named side. ``side="both"`` means
+    the same op kind is responsible on both pipelines (the common case,
+    e.g. an Aggregate with a different agg function on each side).
+    ``side="offline"`` or ``"online"`` covers orphan-op divergences where
+    the responsible op exists on only one side (e.g. a Project that adds
+    a column offline that the online pipeline never produces).
+    """
+
+    op_kind: str
+    side: LocalizationSide = "both"
+
+
+@dataclass(frozen=True)
 class Pair:
     """A loaded pair, ready for diffing."""
 
@@ -83,6 +126,7 @@ class Pair:
     path: Path
     source_url: str | None = None
     postmortem_url: str | None = None
+    expected_localization: tuple[ExpectedLocalization, ...] = ()
 
 
 # Provenance required per bucket: a real_world pair must cite the public
@@ -134,6 +178,34 @@ def load_pair(pair_dir: Path) -> Pair:
         for e in expected_raw
     )
 
+    expected_loc_raw = meta.get("expected_localization", []) or []
+    if not isinstance(expected_loc_raw, list):
+        raise ValueError(
+            f"pair {pair_dir}: expected_localization must be a list of "
+            f"{{op_kind, side}} rows, got {type(expected_loc_raw).__name__}"
+        )
+    valid_sides = set(get_args(LocalizationSide))
+    expected_localization: list[ExpectedLocalization] = []
+    for row in expected_loc_raw:
+        if not isinstance(row, dict):
+            raise ValueError(
+                f"pair {pair_dir}: each expected_localization row must be a "
+                f"mapping with op_kind (and optional side), got {row!r}"
+            )
+        kind = row.get("op_kind")
+        if kind not in _OP_KINDS:
+            raise ValueError(
+                f"pair {pair_dir}: expected_localization row has unknown op_kind "
+                f"{kind!r}; expected one of {sorted(_OP_KINDS)}"
+            )
+        side = row.get("side", "both")
+        if side not in valid_sides:
+            raise ValueError(
+                f"pair {pair_dir}: expected_localization row has unknown side "
+                f"{side!r}; expected one of {sorted(valid_sides)}"
+            )
+        expected_localization.append(ExpectedLocalization(op_kind=kind, side=side))
+
     source_url = meta.get("source_url")
     postmortem_url = meta.get("postmortem_url")
 
@@ -148,6 +220,7 @@ def load_pair(pair_dir: Path) -> Pair:
         path=pair_dir,
         source_url=str(source_url) if source_url else None,
         postmortem_url=str(postmortem_url) if postmortem_url else None,
+        expected_localization=tuple(expected_localization),
     )
 
 

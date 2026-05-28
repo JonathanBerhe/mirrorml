@@ -4,6 +4,9 @@ category: aggregation_function
 description: pandas sums, SQL averages.
 expected_divergences:
 - category: aggregation_function
+expected_localization:
+- op_kind: aggregate
+  side: both
 offline:
   language: pandas
   source: offline.py

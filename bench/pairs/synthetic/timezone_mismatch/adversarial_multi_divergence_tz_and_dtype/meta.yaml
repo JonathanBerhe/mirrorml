@@ -6,6 +6,9 @@ description: ts has different timezone AND score has different dtype. Engine mus
 expected_divergences:
 - category: timezone_mismatch
 - category: type_coercion
+expected_localization:
+- op_kind: source
+  side: both
 offline:
   language: sql
   source: offline.sql

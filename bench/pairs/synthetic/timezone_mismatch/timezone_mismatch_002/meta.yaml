@@ -5,6 +5,9 @@ description: Offline reads events.ts as timestamp[ns, US/Eastern]; online reads 
   timestamp[ns, Asia/Tokyo].
 expected_divergences:
 - category: timezone_mismatch
+expected_localization:
+- op_kind: source
+  side: both
 offline:
   language: sql
   source: offline.sql

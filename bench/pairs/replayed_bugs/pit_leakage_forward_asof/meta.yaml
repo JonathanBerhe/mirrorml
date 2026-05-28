@@ -11,6 +11,9 @@ description: >
 postmortem_url: https://arxiv.org/abs/2207.07048
 expected_divergences:
   - category: as_of_join_direction
+expected_localization:
+  - op_kind: as_of_join
+    side: both
 offline:
   language: polars
   source: offline.py

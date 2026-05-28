@@ -241,6 +241,87 @@ def test_discover_pairs_returns_empty_for_missing_root(tmp_path: Path) -> None:
     assert discover_pairs(tmp_path / "does_not_exist") == []
 
 
+def test_load_pair_parses_expected_localization(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "sample"
+    _write_pair(
+        pair_dir,
+        name="sample",
+        category="aggregation_function",
+        offline_sql="SELECT uid, SUM(score) AS score FROM t GROUP BY uid\n",
+        online_sql="SELECT uid, AVG(score) AS score FROM t GROUP BY uid\n",
+        offline_schemas={"t": [("uid", "int64"), ("score", "float64")]},
+        online_schemas={"t": [("uid", "int64"), ("score", "float64")]},
+        expected_divergences=[{"category": "aggregation_function"}],
+        extra_meta={
+            "expected_localization": [{"op_kind": "aggregate", "side": "both"}],
+        },
+    )
+    pair = load_pair(pair_dir)
+    assert len(pair.expected_localization) == 1
+    assert pair.expected_localization[0].op_kind == "aggregate"
+    assert pair.expected_localization[0].side == "both"
+
+
+def test_load_pair_defaults_localization_side_to_both(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "sample"
+    _write_pair(
+        pair_dir,
+        **_kwargs(),  # type: ignore[arg-type]
+        extra_meta={"expected_localization": [{"op_kind": "filter"}]},
+    )
+    pair = load_pair(pair_dir)
+    assert pair.expected_localization[0].side == "both"
+
+
+def test_load_pair_rejects_unknown_localization_op_kind(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "broken"
+    _write_pair(
+        pair_dir,
+        **_kwargs(),  # type: ignore[arg-type]
+        extra_meta={"expected_localization": [{"op_kind": "not_a_real_op"}]},
+    )
+    with pytest.raises(ValueError, match="unknown op_kind"):
+        load_pair(pair_dir)
+
+
+def test_load_pair_rejects_unknown_localization_side(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "broken"
+    _write_pair(
+        pair_dir,
+        **_kwargs(),  # type: ignore[arg-type]
+        extra_meta={
+            "expected_localization": [{"op_kind": "filter", "side": "sideways"}],
+        },
+    )
+    with pytest.raises(ValueError, match="unknown side"):
+        load_pair(pair_dir)
+
+
+def test_load_pair_rejects_non_list_expected_localization(tmp_path: Path) -> None:
+    """Defensive: a scalar (instead of a list of rows) should fail loudly,
+    not yield a confusing per-character error."""
+
+    pair_dir = tmp_path / "broken"
+    _write_pair(
+        pair_dir,
+        **_kwargs(),  # type: ignore[arg-type]
+        extra_meta={"expected_localization": "filter"},
+    )
+    with pytest.raises(ValueError, match="must be a list"):
+        load_pair(pair_dir)
+
+
+def test_load_pair_rejects_non_dict_localization_row(tmp_path: Path) -> None:
+    pair_dir = tmp_path / "broken"
+    _write_pair(
+        pair_dir,
+        **_kwargs(),  # type: ignore[arg-type]
+        extra_meta={"expected_localization": ["filter"]},
+    )
+    with pytest.raises(ValueError, match="must be a mapping"):
+        load_pair(pair_dir)
+
+
 def test_discover_pairs_is_sorted_for_determinism(tmp_path: Path) -> None:
     for cat in ("z_last", "a_first", "m_middle"):
         _write_pair(
