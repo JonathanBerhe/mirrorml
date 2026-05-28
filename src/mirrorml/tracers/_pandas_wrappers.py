@@ -25,16 +25,15 @@ engine return ``()`` for cross-framework equivalent pipelines.
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
 from mirrorml.exceptions import UnsupportedOperationError
 from mirrorml.fingerprint.operations import Aggregate, FillNa, Filter, Project, Sort, Source, Udf
-from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta, UdfRef
-from mirrorml.fingerprint.udf_hash import SOURCE_HASH_ALGORITHM, source_hash
+from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta
 from mirrorml.tracers._trace_common import (
     TracePredicate,
     aggregation_output_dtype,
+    build_udf_ref,
     next_op_index,
     render_literal,
     resolve_agg_func,
@@ -422,7 +421,7 @@ class _TraceFrame:
             raise UnsupportedOperationError(
                 f"pandas tracer: df.apply(...) needs a callable; got {type(func).__name__}"
             )
-        ref = _udf_ref(func)
+        ref = build_udf_ref(func)
         input_columns = tuple(self._schema)
         output_columns = input_columns  # per-column reduction keeps the column set
         op_id = f"udf_{next_op_index(self._operations)}"
@@ -440,25 +439,6 @@ class _TraceFrame:
             operations=self._operations,
             last_op_id=op_id,
         )
-
-
-def _udf_ref(func: object) -> UdfRef:
-    """Build a :class:`UdfRef` for ``func``: source-hash plus a signature
-    string. Lambdas and C extensions raise via :func:`source_hash`.
-    """
-
-    assert callable(func)
-    qualname = getattr(func, "__qualname__", None) or getattr(func, "__name__", None) or repr(func)
-    try:
-        sig = str(inspect.signature(func))
-    except (TypeError, ValueError):
-        sig = "(?)"
-    return UdfRef(
-        qualname=str(qualname),
-        source_hash=source_hash(func),
-        signature=sig,
-        source_hash_algorithm=SOURCE_HASH_ALGORITHM,
-    )
 
 
 def _as_column_list(value: object, *, what: str) -> list[str]:

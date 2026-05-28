@@ -593,6 +593,38 @@ def _udf_pairs() -> Iterable[dict[str, Any]]:
     )
 
     yield {
+        "name": "cross_framework_identity_udf_pandas_vs_polars",
+        "category": "identity",
+        "description": (
+            "pandas df.apply(_identity) vs polars lf.map_batches(_identity) "
+            "with the same callable body. The libcst-norm-v1 source-hash "
+            "collapses formatting and makes the Udf ops fingerprint "
+            "identically across frameworks, so diff is empty."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": (
+                "def _identity(df):\n    return df\n\n"
+                "def offline(df):\n    return df.apply(_identity)\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": (
+                "def _identity(df):\n    return df\n\n"
+                "def online(lf, pl):\n    return lf.map_batches(_identity)\n"
+            ),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [],
+    }
+
+    yield {
         "name": "identity_udf_apply",
         "category": "identity",
         "description": (

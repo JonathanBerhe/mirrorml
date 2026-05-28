@@ -35,12 +35,14 @@ from mirrorml.fingerprint.operations import (
     Project,
     Sort,
     Source,
+    Udf,
     Window,
 )
 from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta, TemporalSemantics
 from mirrorml.tracers._trace_common import (
     TracePredicate,
     aggregation_output_dtype,
+    build_udf_ref,
     next_op_index,
     render_literal,
     resolve_agg_func,
@@ -448,6 +450,44 @@ class _TraceLazyFrame:
     def groupby(self, *by: object) -> _TraceGroupBy:
         """Alias for :meth:`group_by` (Polars < 0.20 spelling)."""
         return self.group_by(*by)
+
+    def map_batches(self, func: object, *, schema: object = None) -> _TraceLazyFrame:
+        """Emit a :class:`Udf` op for ``lf.map_batches(callable)``.
+
+        ``map_batches`` is the polars analog of pandas's ``df.apply``: the
+        callable receives a whole frame and returns a whole frame. Static
+        analysis cannot decide what the callable computes, so the UDF
+        body is captured as a normalized source-hash on the
+        :class:`UdfRef`. Two pipelines that pass the same callable
+        (modulo formatting / comments / docstrings) produce the same
+        fingerprint.
+
+        ``schema`` is forwarded for parity with the real polars API but is
+        not consulted: the output schema is conservatively passed through.
+        Pipelines that need to declare a true schema-changing UDF should
+        emit a follow-up ``select`` / ``rename`` for the diff classifier
+        to see.
+        """
+
+        del schema  # accepted for API parity; not currently modeled
+        if not callable(func):
+            raise UnsupportedOperationError(
+                f"polars tracer: lf.map_batches(...) needs a callable; got {type(func).__name__}"
+            )
+        ref = build_udf_ref(func)
+        input_columns = tuple(self._schema)
+        output_columns = input_columns
+        op_id = f"udf_{next_op_index(self._operations)}"
+        self._operations.append(
+            Udf(
+                op_id=op_id,
+                dependencies=(self._last_op_id,),
+                ref=ref,
+                input_columns=input_columns,
+                output_columns=output_columns,
+            )
+        )
+        return self._derive(dict(self._schema), op_id)
 
     def fill_null(self, value: object = None) -> _TraceLazyFrame:
         """Emit a :class:`FillNa` op for a constant fill over all columns.

@@ -1,0 +1,30 @@
+name: cross_framework_identity_udf_pandas_vs_polars
+bucket: synthetic
+category: identity
+description: pandas df.apply(_identity) vs polars lf.map_batches(_identity) with the
+  same callable body. The libcst-norm-v1 source-hash collapses formatting and makes
+  the Udf ops fingerprint identically across frameworks, so diff is empty.
+expected_divergences: []
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

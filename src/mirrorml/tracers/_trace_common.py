@@ -17,11 +17,13 @@ Predicate strings follow SQL form: ``=``, ``<>``, ``AND``, ``OR``,
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import inspect
+from collections.abc import Callable, Mapping, Sequence
 from typing import Literal
 
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.schema import Operation
+from mirrorml.fingerprint.schema import Operation, UdfRef
+from mirrorml.fingerprint.udf_hash import SOURCE_HASH_ALGORITHM, source_hash
 
 # Output dtype rules for aggregations. Mirrors _sql_walker._FIXED_DTYPE_FOR_FUNC
 # so a cross-framework Aggregate op produces an identical output_schema.
@@ -87,6 +89,30 @@ def next_op_index(operations: list[Operation]) -> int:
     within a fingerprint is what matters."""
 
     return len(operations)
+
+
+def build_udf_ref(func: Callable[..., object]) -> UdfRef:
+    """Build a :class:`UdfRef` for ``func``: qualname, normalized
+    source-hash, signature, and the algorithm version. Used by both the
+    pandas (``df.apply``) and polars (``lf.map_batches``) UDF entrypoints
+    so a cross-framework identity-UDF pair fingerprints identically.
+
+    Raises :class:`UnsupportedOperationError` (via
+    :func:`mirrorml.fingerprint.udf_hash.source_hash`) when the callable
+    has no retrievable source (REPL lambdas, C extensions).
+    """
+
+    qualname = getattr(func, "__qualname__", None) or getattr(func, "__name__", None) or repr(func)
+    try:
+        sig = str(inspect.signature(func))
+    except (TypeError, ValueError):
+        sig = "(?)"
+    return UdfRef(
+        qualname=str(qualname),
+        source_hash=source_hash(func),
+        signature=sig,
+        source_hash_algorithm=SOURCE_HASH_ALGORITHM,
+    )
 
 
 def resolve_agg_func(func: object, *, name_map: Mapping[str, str], framework: str) -> str:

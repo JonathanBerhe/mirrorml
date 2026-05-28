@@ -562,6 +562,75 @@ def test_fill_null_value_difference_surfaces_null_handling() -> None:
     assert [d.category for d in divs] == ["null_handling"]
 
 
+# --- map_batches (UDF) ------------------------------------------------------
+
+
+def _identity_frame(df: Any) -> Any:
+    return df
+
+
+def _drop_score(df: Any) -> Any:
+    return df.drop("score")
+
+
+def test_map_batches_emits_udf_op_with_source_hash() -> None:
+    from mirrorml.fingerprint.operations import Udf
+
+    fp = trace_polars(
+        lambda lf, pl: lf.map_batches(_identity_frame), input_schema=EVENTS, source_name="e"
+    )
+    udf_ops = [op for op in fp.operations if isinstance(op, Udf)]
+    assert len(udf_ops) == 1
+    assert udf_ops[0].ref.qualname.endswith("_identity_frame")
+    assert len(udf_ops[0].ref.source_hash) == 64
+
+
+def test_map_batches_same_callable_diffs_to_empty() -> None:
+    a = trace_polars(
+        lambda lf, pl: lf.map_batches(_identity_frame), input_schema=EVENTS, source_name="e"
+    )
+    b = trace_polars(
+        lambda lf, pl: lf.map_batches(_identity_frame), input_schema=EVENTS, source_name="e"
+    )
+    assert diff(a, b) == ()
+
+
+def test_map_batches_different_callables_surface_divergence() -> None:
+    a = trace_polars(
+        lambda lf, pl: lf.map_batches(_identity_frame), input_schema=EVENTS, source_name="e"
+    )
+    b = trace_polars(
+        lambda lf, pl: lf.map_batches(_drop_score), input_schema=EVENTS, source_name="e"
+    )
+    divs = diff(a, b)
+    assert divs
+    assert any("udf body" in d.detail for d in divs)
+
+
+def test_map_batches_non_callable_is_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="needs a callable"):
+        trace_polars(
+            lambda lf, pl: lf.map_batches("not a function"),
+            input_schema=EVENTS,
+            source_name="e",
+        )
+
+
+def test_cross_framework_pandas_apply_polars_map_batches_same_body_diffs_empty() -> None:
+    """The killer cross-framework test: same callable body on pandas and
+    polars produces the same source-hash, so the Udf ops fingerprint
+    identically and diff is empty even though the two sides reach the UDF
+    through different APIs."""
+
+    pandas_fp = trace_pandas(
+        lambda df: df.apply(_identity_frame), input_schema=EVENTS, source_name="e"
+    )
+    polars_fp = trace_polars(
+        lambda lf, pl: lf.map_batches(_identity_frame), input_schema=EVENTS, source_name="e"
+    )
+    assert diff(pandas_fp, polars_fp) == ()
+
+
 # --- cross-framework equivalence (third framework) --------------------------
 
 
