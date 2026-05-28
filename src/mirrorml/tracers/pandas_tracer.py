@@ -34,6 +34,7 @@ def trace_pandas(
     *,
     input_schema: Iterable[ColumnSpec],
     source_name: str = "input",
+    event_time_column: str | None = None,
 ) -> Fingerprint:
     """Trace a pandas feature pipeline; return its canonical fingerprint.
 
@@ -52,6 +53,10 @@ def trace_pandas(
             ``"input"``. Set this to the SQL table name (e.g.,
             ``"events"``) when you want the pandas fingerprint to
             ``diff() == ()`` against an equivalent SQL fingerprint.
+        event_time_column: Optional name of the column that represents
+            event-time. Recorded on the Source op so the diff classifier
+            can compare temporal-leakage guards across pipelines (see
+            ``feature_leakage_temporal``). Must be in ``input_schema``.
 
     Returns:
         A canonical :class:`~mirrorml.fingerprint.schema.Fingerprint`.
@@ -86,6 +91,7 @@ def trace_pandas(
     frame, operations = build_initial_frame(
         source_name=source_name,
         input_schema=input_schema_tuple,
+        event_time_column=event_time_column,
     )
 
     result = pipeline(frame)

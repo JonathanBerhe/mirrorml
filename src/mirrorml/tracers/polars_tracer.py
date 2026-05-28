@@ -37,6 +37,7 @@ def trace_polars(
     *,
     input_schema: Iterable[ColumnSpec],
     source_name: str = "input",
+    event_time_column: str | None = None,
 ) -> Fingerprint:
     """Trace a Polars feature pipeline; return its canonical fingerprint.
 
@@ -89,6 +90,7 @@ def trace_polars(
     frame, operations = build_initial_frame(
         source_name=source_name,
         input_schema=input_schema_tuple,
+        event_time_column=event_time_column,
     )
 
     result = pipeline(frame, _TraceExprNamespace(operations))

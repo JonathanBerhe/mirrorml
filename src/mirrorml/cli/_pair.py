@@ -254,9 +254,20 @@ def _trace_side(pair_dir: Path, side: dict[str, Any], *, side_label: str = "?") 
             )
         input_schema = tuple(tuple(col) for col in raw_schema)
         source_name = side.get("source_name", "input")
+        event_time_column = side.get("event_time_column")
         if language == "pandas":
-            return trace_pandas(function, input_schema=input_schema, source_name=source_name)
-        return trace_polars(function, input_schema=input_schema, source_name=source_name)
+            return trace_pandas(
+                function,
+                input_schema=input_schema,
+                source_name=source_name,
+                event_time_column=event_time_column,
+            )
+        return trace_polars(
+            function,
+            input_schema=input_schema,
+            source_name=source_name,
+            event_time_column=event_time_column,
+        )
 
     raise ValueError(
         f"pair {pair_dir}: {side_label} has unknown language {language!r}; "

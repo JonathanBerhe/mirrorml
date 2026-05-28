@@ -704,15 +704,33 @@ def build_initial_frame(
     *,
     source_name: str,
     input_schema: tuple[ColumnSpec, ...],
+    event_time_column: str | None = None,
 ) -> tuple[_TraceFrame, list[Operation]]:
     """Build the initial ``_TraceFrame`` and its Source operation.
+
+    ``event_time_column`` (optional) names the column that represents the
+    event-time for downstream temporal-correctness checks
+    (``feature_leakage_temporal``). The classifier compares it against
+    the other side's declaration and flags pipelines whose aggregations
+    aren't bounded relative to it.
 
     The returned operations list is shared with the frame; derived frames
     (from ``__getitem__``) append to it as the pipeline runs.
     """
 
+    if event_time_column is not None and event_time_column not in dict(input_schema):
+        raise UnsupportedOperationError(
+            f"pandas tracer: event_time_column {event_time_column!r} is not in "
+            f"input_schema columns {[c for c, _ in input_schema]}"
+        )
+
     operations: list[Operation] = []
-    source = Source(op_id="source_0", name=source_name, columns=input_schema)
+    source = Source(
+        op_id="source_0",
+        name=source_name,
+        columns=input_schema,
+        event_time_column=event_time_column,
+    )
     operations.append(source)
 
     frame = _TraceFrame(

@@ -143,6 +143,78 @@ def test_type_coercion_int_widening() -> None:
     assert any(d.category == "type_coercion" for d in divs)
 
 
+# --- feature_leakage_temporal ------------------------------------------------
+
+
+def test_feature_leakage_temporal_window_vs_unbounded_agg() -> None:
+    """Both sides declare event_time_column. One side wraps the
+    aggregation in a Window; the other uses a plain Aggregate. The
+    leakage rule fires; the collateral schema_drift is suppressed."""
+
+    from mirrorml import trace_polars
+
+    schema = (("uid", "int64"), ("ts", "timestamp[ns, UTC]"), ("score", "float64"))
+    safe = trace_polars(
+        lambda lf, pl: lf.rolling(
+            index_column="ts", period="7d", closed="left", group_by="uid"
+        ).agg(pl.col("score").mean()),
+        input_schema=schema,
+        event_time_column="ts",
+    )
+    leaky = trace_polars(
+        lambda lf, pl: lf.group_by("uid").agg(pl.col("score").mean()),
+        input_schema=schema,
+        event_time_column="ts",
+    )
+    divs = diff(safe, leaky)
+    assert any(d.category == "feature_leakage_temporal" for d in divs)
+    # Suppression: no leftover schema_drift naming the Window or Aggregate ops.
+    assert not any(d.category == "schema_drift" for d in divs)
+
+
+def test_feature_leakage_temporal_symmetric_unbounded_does_not_fire() -> None:
+    """Both sides aggregate without a Window. The rule requires asymmetry;
+    same-pattern leakiness on both sides is not a divergence."""
+
+    from mirrorml import trace_polars
+
+    schema = (("uid", "int64"), ("ts", "timestamp[ns, UTC]"), ("score", "float64"))
+    a = trace_polars(
+        lambda lf, pl: lf.group_by("uid").agg(pl.col("score").mean()),
+        input_schema=schema,
+        event_time_column="ts",
+    )
+    b = trace_polars(
+        lambda lf, pl: lf.group_by("uid").agg(pl.col("score").mean()),
+        input_schema=schema,
+        event_time_column="ts",
+    )
+    assert diff(a, b) == ()
+
+
+def test_feature_leakage_temporal_requires_event_time_on_both_sides() -> None:
+    """When only one side declares event_time_column, the rule does not
+    fire (it has no basis for the temporal claim on the unannotated side)."""
+
+    from mirrorml import trace_polars
+
+    schema = (("uid", "int64"), ("ts", "timestamp[ns, UTC]"), ("score", "float64"))
+    a = trace_polars(
+        lambda lf, pl: lf.rolling(
+            index_column="ts", period="7d", closed="left", group_by="uid"
+        ).agg(pl.col("score").mean()),
+        input_schema=schema,
+        event_time_column="ts",
+    )
+    b = trace_polars(
+        lambda lf, pl: lf.group_by("uid").agg(pl.col("score").mean()),
+        input_schema=schema,
+        # no event_time_column
+    )
+    divs = diff(a, b)
+    assert not any(d.category == "feature_leakage_temporal" for d in divs)
+
+
 # --- unit_mismatch -----------------------------------------------------------
 
 

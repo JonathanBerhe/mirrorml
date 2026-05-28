@@ -93,36 +93,123 @@ def diff(left: Fingerprint, right: Fingerprint, /) -> tuple[Divergence, ...]:
     if left.fingerprint_id == right.fingerprint_id:
         return ()
 
+    # The leakage rule is computed first because, when it fires, the
+    # asymmetric Window-vs-Aggregate pair also surfaces as ``schema_drift``
+    # at both the output-schema level and the LCS-orphan level. We collect
+    # the op_ids the rule names so we can suppress those collateral
+    # ``schema_drift`` divergences below.
+    leakage_divs = list(_feature_leakage_check(left, right))
+    leakage_op_ids = {d.left_op_id for d in leakage_divs} | {d.right_op_id for d in leakage_divs}
+    leakage_op_ids.discard(None)
+
+    def _accept(div: Divergence) -> bool:
+        if div.category != "schema_drift":
+            return True
+        return div.left_op_id not in leakage_op_ids and div.right_op_id not in leakage_op_ids
+
     divergences: list[Divergence] = []
 
     left_input_op_id = _primary_source_op_id(left)
     right_input_op_id = _primary_source_op_id(right)
     divergences.extend(
-        compare_schemas(
+        d
+        for d in compare_schemas(
             left.input_schema,
             right.input_schema,
             location="input",
             left_op_id=left_input_op_id,
             right_op_id=right_input_op_id,
         )
+        if _accept(d)
     )
 
     left_output_op_id = left.operations[-1].op_id if left.operations else None
     right_output_op_id = right.operations[-1].op_id if right.operations else None
     divergences.extend(
-        compare_schemas(
+        d
+        for d in compare_schemas(
             left.output_schema,
             right.output_schema,
             location="output",
             left_op_id=left_output_op_id,
             right_op_id=right_output_op_id,
         )
+        if _accept(d)
     )
 
     for step in _align_operations(left.operations, right.operations):
-        divergences.extend(_classify_alignment_step(step))
+        for div in _classify_alignment_step(step):
+            if _accept(div):
+                divergences.append(div)
+
+    divergences.extend(leakage_divs)
 
     return tuple(divergences)
+
+
+def _feature_leakage_check(left: Fingerprint, right: Fingerprint) -> Iterator[Divergence]:
+    """Whole-graph rule: flag ``feature_leakage_temporal`` when both sides
+    declare an ``event_time_column`` on their primary Source, but one side
+    bounds its aggregation in a Window (point-in-time safe) and the other
+    leaves it unbounded.
+
+    The unbounded side's plain Aggregate can see rows from after the
+    label time, which is the canonical look-ahead leakage pattern. We
+    fire only when the divergence is *asymmetric* (one side guarded, the
+    other not, with at least one aggregation on the unguarded side); same
+    pattern on both sides is not a divergence even if both leak.
+    """
+
+    left_event_time = _primary_source_event_time(left)
+    right_event_time = _primary_source_event_time(right)
+    if left_event_time is None or right_event_time is None:
+        return
+
+    left_has_window = any(op.kind == "window" for op in left.operations)
+    right_has_window = any(op.kind == "window" for op in right.operations)
+    left_has_agg = any(op.kind == "aggregate" for op in left.operations)
+    right_has_agg = any(op.kind == "aggregate" for op in right.operations)
+
+    leaky_left = right_has_window and left_has_agg and not left_has_window
+    leaky_right = left_has_window and right_has_agg and not right_has_window
+    if not (leaky_left or leaky_right):
+        return
+
+    leaky_label = "offline (left)" if leaky_left else "online (right)"
+    guarded_label = "online (right)" if leaky_left else "offline (left)"
+    leaky_fp = left if leaky_left else right
+    guarded_fp = right if leaky_left else left
+
+    leaky_op = next((op for op in leaky_fp.operations if op.kind == "aggregate"), None)
+    guarded_op = next((op for op in guarded_fp.operations if op.kind == "window"), None)
+    if leaky_op is None or guarded_op is None:
+        return
+
+    yield Divergence(
+        category="feature_leakage_temporal",
+        left_op_id=(leaky_op.op_id if leaky_left else guarded_op.op_id),
+        right_op_id=(guarded_op.op_id if leaky_left else leaky_op.op_id),
+        detail=(
+            f"{guarded_label} wraps its aggregation in a Window over the "
+            f"event_time column (point-in-time safe); {leaky_label} uses a "
+            f"plain Aggregate with no temporal bound, which may see rows "
+            f"from after the label time. "
+            f"event_time_column = {left_event_time!r} / {right_event_time!r}."
+        ),
+    )
+
+
+def _primary_source_event_time(fp: Fingerprint) -> str | None:
+    """Return the ``event_time_column`` declared on the primary Source op,
+    or ``None`` if the pipeline did not declare one."""
+
+    for op in fp.operations:
+        if isinstance(op, Source) and op.columns == fp.input_schema:
+            return op.event_time_column
+    for op in fp.operations:
+        if isinstance(op, Source):
+            return op.event_time_column
+    return None
 
 
 def _primary_source_op_id(fp: Fingerprint) -> str | None:
