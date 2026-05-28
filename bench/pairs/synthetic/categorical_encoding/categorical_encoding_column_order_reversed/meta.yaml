@@ -1,0 +1,38 @@
+name: categorical_encoding_column_order_reversed
+bucket: synthetic
+category: categorical_encoding
+description: Offline encodes (country, city); online encodes (city, country). Same
+  set, different order. Encode.columns is order-sensitive so this fires (downstream
+  column order is observable).
+expected_divergences:
+- category: categorical_encoding
+expected_localization:
+- op_kind: encode
+  side: both
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - country
+    - utf8
+  - - city
+    - utf8
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - country
+    - utf8
+  - - city
+    - utf8
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

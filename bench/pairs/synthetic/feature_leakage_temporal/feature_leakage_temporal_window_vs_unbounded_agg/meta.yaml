@@ -1,0 +1,39 @@
+name: feature_leakage_temporal_window_vs_unbounded_agg
+bucket: synthetic
+category: feature_leakage_temporal
+description: Offline uses a 7-day point-in-time-safe rolling mean; online uses a plain
+  unbounded mean. The unbounded side may see rows from after the label time.
+expected_divergences:
+- category: feature_leakage_temporal
+expected_localization:
+- op_kind: aggregate
+  side: online
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+  event_time_column: ts
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+  event_time_column: ts
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

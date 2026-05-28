@@ -1,0 +1,40 @@
+name: feature_leakage_temporal_cross_framework_pandas_vs_polars
+bucket: synthetic
+category: feature_leakage_temporal
+description: pandas offline aggregates score with no temporal bound; polars online
+  wraps it in a 7-day rolling window. feature_leakage_temporal fires because of the
+  asymmetric guard.
+expected_divergences:
+- category: feature_leakage_temporal
+expected_localization:
+- op_kind: aggregate
+  side: offline
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+  event_time_column: ts
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+  event_time_column: ts
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

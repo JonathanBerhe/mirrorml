@@ -1,0 +1,35 @@
+name: no_leakage_rule_when_only_one_side_declares_event_time
+bucket: synthetic
+category: identity
+description: 'Sanity: when only one side declares event_time_column, the leakage rule
+  does not fire. The pipelines may still differ structurally (and the engine will
+  surface that elsewhere), but it is not a temporal-leakage divergence.'
+expected_divergences: []
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+  event_time_column: ts
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

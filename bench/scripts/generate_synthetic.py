@@ -566,6 +566,391 @@ def _identity_pairs() -> Iterable[dict[str, Any]]:
     }
 
 
+def _feature_leakage_temporal_pairs() -> Iterable[dict[str, Any]]:
+    """feature_leakage_temporal pairs. Both sides declare an
+    ``event_time_column`` on Source; one side wraps its aggregation in a
+    Window (point-in-time safe) while the other uses a plain Aggregate
+    (potentially sees rows from after the label time). The engine's
+    whole-graph rule fires on the asymmetry."""
+
+    events = [
+        ("uid", "int64"),
+        ("ts", "timestamp[ns, UTC]"),
+        ("score", "float64"),
+    ]
+    windowed_src = (
+        "def {fn}(lf, pl):\n"
+        "    return lf.rolling(index_column='ts', period='7d', closed='left', "
+        "group_by='uid').agg(pl.col('score').mean())\n"
+    )
+    unbounded_src = "def {fn}(lf, pl):\n    return lf.group_by('uid').agg(pl.col('score').mean())\n"
+
+    yield {
+        "name": "feature_leakage_temporal_window_vs_unbounded_agg",
+        "category": "feature_leakage_temporal",
+        "description": (
+            "Offline uses a 7-day point-in-time-safe rolling mean; online "
+            "uses a plain unbounded mean. The unbounded side may see rows "
+            "from after the label time."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": windowed_src.format(fn="offline"),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": unbounded_src.format(fn="online"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "expected_divergences": [{"category": "feature_leakage_temporal"}],
+        "expected_localization": [_loc("aggregate", side="online")],
+    }
+
+    yield {
+        "name": "feature_leakage_temporal_offline_leaky_online_safe",
+        "category": "feature_leakage_temporal",
+        "description": (
+            "Symmetric case: offline uses an unbounded mean (potentially "
+            "leaky during training); online uses the point-in-time-safe "
+            "rolling mean. Direction matters for the diagnostic."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": unbounded_src.format(fn="offline"),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": windowed_src.format(fn="online"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "expected_divergences": [{"category": "feature_leakage_temporal"}],
+        "expected_localization": [_loc("aggregate", side="offline")],
+    }
+
+    yield {
+        "name": "identity_feature_leakage_temporal_both_windowed",
+        "category": "identity",
+        "description": (
+            "Both sides use the point-in-time-safe rolling mean over the "
+            "same event_time_column. Diff is empty: no leakage divergence "
+            "because there is no asymmetry."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": windowed_src.format(fn="offline"),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": windowed_src.format(fn="online"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "expected_divergences": [],
+    }
+
+    # A control: same unbounded aggregate on both sides. The leakage rule
+    # requires *asymmetry*; symmetric leakiness is not a divergence (both
+    # pipelines have the same bug, which the rule cannot distinguish from
+    # the user genuinely not needing point-in-time guarantees).
+    yield {
+        "name": "identity_feature_leakage_temporal_both_unbounded",
+        "category": "identity",
+        "description": (
+            "Both sides use the unbounded aggregate. The leakage rule "
+            "intentionally does not fire on symmetric leakiness: both "
+            "pipelines share the same temporal assumption."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": unbounded_src.format(fn="offline"),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": unbounded_src.format(fn="online"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "expected_divergences": [],
+    }
+
+    # Cross-framework: pandas-side leaky aggregation vs polars-side
+    # windowed aggregation. event_time_column declared on both.
+    yield {
+        "name": "feature_leakage_temporal_cross_framework_pandas_vs_polars",
+        "category": "feature_leakage_temporal",
+        "description": (
+            "pandas offline aggregates score with no temporal bound; "
+            "polars online wraps it in a 7-day rolling window. "
+            "feature_leakage_temporal fires because of the asymmetric guard."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": (
+                "def offline(df):\n    return df.groupby('uid').agg({'score': 'mean'})\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": windowed_src.format(fn="online"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "expected_divergences": [{"category": "feature_leakage_temporal"}],
+        "expected_localization": [_loc("aggregate", side="offline")],
+    }
+
+    # Sanity: event_time_column declared on only one side -- rule must NOT
+    # fire (it requires both sides to declare it, otherwise we have no
+    # claim on what 'temporal' means for the unannotated side).
+    yield {
+        "name": "no_leakage_rule_when_only_one_side_declares_event_time",
+        "category": "identity",
+        "description": (
+            "Sanity: when only one side declares event_time_column, the "
+            "leakage rule does not fire. The pipelines may still differ "
+            "structurally (and the engine will surface that elsewhere), "
+            "but it is not a temporal-leakage divergence."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": unbounded_src.format(fn="offline"),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+            "event_time_column": "ts",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": unbounded_src.format(fn="online"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+            # NB: no event_time_column declared on this side.
+        },
+        "expected_divergences": [],
+    }
+
+
+def _categorical_encoding_pairs() -> Iterable[dict[str, Any]]:
+    """categorical_encoding pairs. Both sides one-hot-encode via polars
+    ``lf.to_dummies(...)`` but disagree on which columns are encoded.
+    The Encode op carries (columns, method, categories); any difference
+    routes to ``categorical_encoding``."""
+
+    events = [("uid", "int64"), ("country", "utf8"), ("city", "utf8")]
+
+    yield {
+        "name": "identity_to_dummies_same_columns",
+        "category": "identity",
+        "description": (
+            "Both sides one-hot-encode the same columns with the same method; "
+            "the Encode ops fingerprint identically and diff is empty."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": (
+                "def offline(lf, pl):\n    return lf.to_dummies(columns=['country'])\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": (
+                "def online(lf, pl):\n    return lf.to_dummies(columns=['country'])\n"
+            ),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [],
+    }
+
+    yield {
+        "name": "categorical_encoding_different_columns",
+        "category": "categorical_encoding",
+        "description": (
+            "Offline encodes ``country``; online encodes ``city``. The "
+            "Encode.columns differ; classifier surfaces categorical_encoding."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": (
+                "def offline(lf, pl):\n    return lf.to_dummies(columns=['country'])\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": ("def online(lf, pl):\n    return lf.to_dummies(columns=['city'])\n"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [{"category": "categorical_encoding"}],
+        "expected_localization": [_loc("encode")],
+    }
+
+    yield {
+        "name": "categorical_encoding_extra_column",
+        "category": "categorical_encoding",
+        "description": (
+            "Offline encodes ``country`` only; online encodes both "
+            "``country`` and ``city``. Column-set difference fires."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": (
+                "def offline(lf, pl):\n    return lf.to_dummies(columns=['country'])\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": (
+                "def online(lf, pl):\n    return lf.to_dummies(columns=['country', 'city'])\n"
+            ),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [{"category": "categorical_encoding"}],
+        "expected_localization": [_loc("encode")],
+    }
+
+    yield {
+        "name": "categorical_encoding_pinned_vs_runtime_fit",
+        "category": "categorical_encoding",
+        "description": (
+            "Offline pins the category vocabulary; online leaves it as "
+            "None (runtime-fit). Static analysis cannot prove equality; "
+            "categorical_encoding fires."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": (
+                "def offline(lf, pl):\n    return lf.to_dummies(columns=['country'])\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": (
+                "def online(lf, pl):\n    return lf.to_dummies(columns=['country'])\n"
+            ),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        # Both sides emit the same Encode op (categories=None on both).
+        # We override one side's categories via an Encode op constructed
+        # downstream in a follow-up; for now both render identically, so
+        # this pair acts as a control that documents the limitation.
+        "expected_divergences": [],
+        "_documentation_note": (
+            "Both sides emit categories=None; the divergence is unobservable "
+            "statically. This pair documents the v0 limitation (no pinned-"
+            "categories tracer API yet) rather than fabricating a fake diff."
+        ),
+    }
+
+    yield {
+        "name": "categorical_encoding_all_vs_subset",
+        "category": "categorical_encoding",
+        "description": (
+            "Offline one-hot-encodes every column (``columns=None`` default); "
+            "online encodes a subset. Column-set difference fires."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": "def offline(lf, pl):\n    return lf.to_dummies()\n",
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": (
+                "def online(lf, pl):\n    return lf.to_dummies(columns=['country'])\n"
+            ),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [{"category": "categorical_encoding"}],
+        "expected_localization": [_loc("encode")],
+    }
+
+    yield {
+        "name": "categorical_encoding_column_order_reversed",
+        "category": "categorical_encoding",
+        "description": (
+            "Offline encodes (country, city); online encodes (city, country). "
+            "Same set, different order. Encode.columns is order-sensitive "
+            "so this fires (downstream column order is observable)."
+        ),
+        "offline": {
+            "language": "polars",
+            "python_source": (
+                "def offline(lf, pl):\n    return lf.to_dummies(columns=['country', 'city'])\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": (
+                "def online(lf, pl):\n    return lf.to_dummies(columns=['city', 'country'])\n"
+            ),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [{"category": "categorical_encoding"}],
+        "expected_localization": [_loc("encode")],
+    }
+
+
 def _seed_mismatch_pairs() -> Iterable[dict[str, Any]]:
     """seed_mismatch pairs. Both sides call ``df.sample(...)`` /
     ``lf.sample(...)`` with the same n / fraction but different random
@@ -916,6 +1301,8 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _udf_pairs()
     yield from _unit_mismatch_pairs()
     yield from _seed_mismatch_pairs()
+    yield from _categorical_encoding_pairs()
+    yield from _feature_leakage_temporal_pairs()
 
 
 def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
@@ -969,13 +1356,16 @@ def _write_side(target: Path, side: dict[str, Any], *, side_label: str) -> dict[
     if language in ("pandas", "polars"):
         source = f"{side_label}.py"
         (target / source).write_text(side["python_source"])
-        return {
+        side_meta: dict[str, Any] = {
             "language": language,
             "source": source,
             "function": side["function"],
             "input_schema": [list(col) for col in side["input_schema"]],
             "source_name": side.get("source_name", "input"),
         }
+        if side.get("event_time_column"):
+            side_meta["event_time_column"] = side["event_time_column"]
+        return side_meta
     raise ValueError(f"unsupported pair language: {language!r}")
 
 

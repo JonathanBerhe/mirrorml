@@ -1,0 +1,35 @@
+name: identity_feature_leakage_temporal_both_unbounded
+bucket: synthetic
+category: identity
+description: 'Both sides use the unbounded aggregate. The leakage rule intentionally
+  does not fire on symmetric leakiness: both pipelines share the same temporal assumption.'
+expected_divergences: []
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+  event_time_column: ts
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - ts
+    - timestamp[ns, UTC]
+  - - score
+    - float64
+  source_name: events
+  event_time_column: ts
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

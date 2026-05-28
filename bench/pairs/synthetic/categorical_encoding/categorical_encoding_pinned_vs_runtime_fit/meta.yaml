@@ -1,0 +1,33 @@
+name: categorical_encoding_pinned_vs_runtime_fit
+bucket: synthetic
+category: categorical_encoding
+description: Offline pins the category vocabulary; online leaves it as None (runtime-fit).
+  Static analysis cannot prove equality; categorical_encoding fires.
+expected_divergences: []
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - country
+    - utf8
+  - - city
+    - utf8
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - country
+    - utf8
+  - - city
+    - utf8
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

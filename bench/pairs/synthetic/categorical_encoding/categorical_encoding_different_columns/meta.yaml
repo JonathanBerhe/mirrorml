@@ -1,0 +1,37 @@
+name: categorical_encoding_different_columns
+bucket: synthetic
+category: categorical_encoding
+description: Offline encodes ``country``; online encodes ``city``. The Encode.columns
+  differ; classifier surfaces categorical_encoding.
+expected_divergences:
+- category: categorical_encoding
+expected_localization:
+- op_kind: encode
+  side: both
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - country
+    - utf8
+  - - city
+    - utf8
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - country
+    - utf8
+  - - city
+    - utf8
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

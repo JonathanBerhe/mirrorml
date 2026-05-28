@@ -1,0 +1,33 @@
+name: identity_to_dummies_same_columns
+bucket: synthetic
+category: identity
+description: Both sides one-hot-encode the same columns with the same method; the
+  Encode ops fingerprint identically and diff is empty.
+expected_divergences: []
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - country
+    - utf8
+  - - city
+    - utf8
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - country
+    - utf8
+  - - city
+    - utf8
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1
