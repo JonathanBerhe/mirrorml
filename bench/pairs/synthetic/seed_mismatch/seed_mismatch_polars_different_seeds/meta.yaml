@@ -1,0 +1,32 @@
+name: seed_mismatch_polars_different_seeds
+bucket: synthetic
+category: seed_mismatch
+description: polars lf.sample(n=2, seed=...) with different seeds.
+expected_divergences:
+- category: seed_mismatch
+expected_localization:
+- op_kind: sample
+  side: both
+offline:
+  language: polars
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

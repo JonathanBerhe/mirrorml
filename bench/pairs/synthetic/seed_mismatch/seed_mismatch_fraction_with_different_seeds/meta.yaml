@@ -1,0 +1,33 @@
+name: seed_mismatch_fraction_with_different_seeds
+bucket: synthetic
+category: seed_mismatch
+description: Fraction-based sampling, same fraction, different seeds. Demonstrates
+  that seed_mismatch fires regardless of whether the sample size is set via n or fraction.
+expected_divergences:
+- category: seed_mismatch
+expected_localization:
+- op_kind: sample
+  side: both
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: pandas
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

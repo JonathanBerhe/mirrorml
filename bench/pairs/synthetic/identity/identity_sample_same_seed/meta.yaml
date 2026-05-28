@@ -1,0 +1,29 @@
+name: identity_sample_same_seed
+bucket: synthetic
+category: identity
+description: Both sides take a fixed-n reproducible sample with the same seed; the
+  Sample ops fingerprint identically and diff is empty.
+expected_divergences: []
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: pandas
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

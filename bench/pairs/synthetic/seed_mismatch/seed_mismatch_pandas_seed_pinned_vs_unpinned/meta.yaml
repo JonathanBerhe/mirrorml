@@ -1,0 +1,33 @@
+name: seed_mismatch_pandas_seed_pinned_vs_unpinned
+bucket: synthetic
+category: seed_mismatch
+description: Offline pins a seed; online does not. The unseeded side is non-reproducible
+  by definition and disagrees with the seeded one.
+expected_divergences:
+- category: seed_mismatch
+expected_localization:
+- op_kind: sample
+  side: both
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: pandas
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

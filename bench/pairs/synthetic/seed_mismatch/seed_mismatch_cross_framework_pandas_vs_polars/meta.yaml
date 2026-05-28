@@ -1,0 +1,34 @@
+name: seed_mismatch_cross_framework_pandas_vs_polars
+bucket: synthetic
+category: seed_mismatch
+description: 'Cross-framework: pandas df.sample(random_state=42) vs polars lf.sample(seed=7).
+  Both stages fingerprint identically except for the seed, which is the only field
+  that differs.'
+expected_divergences:
+- category: seed_mismatch
+expected_localization:
+- op_kind: sample
+  side: both
+offline:
+  language: pandas
+  source: offline.py
+  function: offline
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+online:
+  language: polars
+  source: online.py
+  function: online
+  input_schema:
+  - - uid
+    - int64
+  - - score
+    - float64
+  source_name: events
+generator:
+  module: bench.scripts.generate_synthetic
+  version: 1

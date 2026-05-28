@@ -566,6 +566,164 @@ def _identity_pairs() -> Iterable[dict[str, Any]]:
     }
 
 
+def _seed_mismatch_pairs() -> Iterable[dict[str, Any]]:
+    """seed_mismatch pairs. Both sides call ``df.sample(...)`` /
+    ``lf.sample(...)`` with the same n / fraction but different random
+    seeds (or one side pins a seed while the other does not). The
+    classifier surfaces the divergence as ``seed_mismatch`` (different
+    rows end up in the training and serving subsets even on the same
+    input). Same-seed pairs land elsewhere as identity controls."""
+
+    events = [("uid", "int64"), ("score", "float64")]
+
+    yield {
+        "name": "identity_sample_same_seed",
+        "category": "identity",
+        "description": (
+            "Both sides take a fixed-n reproducible sample with the same seed; "
+            "the Sample ops fingerprint identically and diff is empty."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": ("def offline(df):\n    return df.sample(n=2, random_state=42)\n"),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "pandas",
+            "python_source": ("def online(df):\n    return df.sample(n=2, random_state=42)\n"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [],
+    }
+
+    yield {
+        "name": "seed_mismatch_pandas_different_seeds",
+        "category": "seed_mismatch",
+        "description": "pandas df.sample(n=2, random_state=...) with different seeds.",
+        "offline": {
+            "language": "pandas",
+            "python_source": ("def offline(df):\n    return df.sample(n=2, random_state=42)\n"),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "pandas",
+            "python_source": ("def online(df):\n    return df.sample(n=2, random_state=7)\n"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [{"category": "seed_mismatch"}],
+        "expected_localization": [_loc("sample")],
+    }
+
+    yield {
+        "name": "seed_mismatch_pandas_seed_pinned_vs_unpinned",
+        "category": "seed_mismatch",
+        "description": (
+            "Offline pins a seed; online does not. The unseeded side is "
+            "non-reproducible by definition and disagrees with the seeded one."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": ("def offline(df):\n    return df.sample(n=3, random_state=0)\n"),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "pandas",
+            "python_source": ("def online(df):\n    return df.sample(n=3)\n"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [{"category": "seed_mismatch"}],
+        "expected_localization": [_loc("sample")],
+    }
+
+    yield {
+        "name": "seed_mismatch_polars_different_seeds",
+        "category": "seed_mismatch",
+        "description": "polars lf.sample(n=2, seed=...) with different seeds.",
+        "offline": {
+            "language": "polars",
+            "python_source": ("def offline(lf, pl):\n    return lf.sample(n=2, seed=42)\n"),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": ("def online(lf, pl):\n    return lf.sample(n=2, seed=7)\n"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [{"category": "seed_mismatch"}],
+        "expected_localization": [_loc("sample")],
+    }
+
+    yield {
+        "name": "seed_mismatch_cross_framework_pandas_vs_polars",
+        "category": "seed_mismatch",
+        "description": (
+            "Cross-framework: pandas df.sample(random_state=42) vs polars "
+            "lf.sample(seed=7). Both stages fingerprint identically except "
+            "for the seed, which is the only field that differs."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": ("def offline(df):\n    return df.sample(n=2, random_state=42)\n"),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "polars",
+            "python_source": ("def online(lf, pl):\n    return lf.sample(n=2, seed=7)\n"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [{"category": "seed_mismatch"}],
+        "expected_localization": [_loc("sample")],
+    }
+
+    yield {
+        "name": "seed_mismatch_fraction_with_different_seeds",
+        "category": "seed_mismatch",
+        "description": (
+            "Fraction-based sampling, same fraction, different seeds. "
+            "Demonstrates that seed_mismatch fires regardless of whether "
+            "the sample size is set via n or fraction."
+        ),
+        "offline": {
+            "language": "pandas",
+            "python_source": (
+                "def offline(df):\n    return df.sample(frac=0.5, random_state=42)\n"
+            ),
+            "function": "offline",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "online": {
+            "language": "pandas",
+            "python_source": ("def online(df):\n    return df.sample(frac=0.5, random_state=7)\n"),
+            "function": "online",
+            "input_schema": events,
+            "source_name": "events",
+        },
+        "expected_divergences": [{"category": "seed_mismatch"}],
+        "expected_localization": [_loc("sample")],
+    }
+
+
 def _unit_mismatch_pairs() -> Iterable[dict[str, Any]]:
     """unit_mismatch pairs. Each side declares the same numeric base
     dtype but a different ``{measurement_unit}`` annotation; the
@@ -757,6 +915,7 @@ def _all_pair_specs() -> Iterable[dict[str, Any]]:
     yield from _adversarial_multi_divergence_pairs()
     yield from _udf_pairs()
     yield from _unit_mismatch_pairs()
+    yield from _seed_mismatch_pairs()
 
 
 def _normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
