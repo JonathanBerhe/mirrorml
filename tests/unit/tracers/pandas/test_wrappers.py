@@ -4,6 +4,8 @@ the cross-framework equivalence claim."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from mirrorml import diff, trace_pandas, trace_polars, trace_sql
@@ -312,6 +314,58 @@ def test_cross_framework_fillna_pandas_vs_polars_diffs_to_empty() -> None:
         lambda lf, pl: lf.fill_null(0), input_schema=EVENTS, source_name="events"
     )
     assert diff(pandas_fp, polars_fp) == ()
+
+
+# --- apply (UDF) ------------------------------------------------------------
+
+
+def _double(col: Any) -> Any:
+    return col * 2
+
+
+def _double_renamed(col: Any) -> Any:
+    """Same body, different name -- intentionally distinct source-hash so
+    diff has something to flag."""
+    return col * 2
+
+
+def _triple(col: Any) -> Any:
+    return col * 3
+
+
+def test_apply_emits_udf_op_with_source_hash() -> None:
+    from mirrorml.fingerprint.operations import Udf
+
+    fp = trace_pandas(lambda df: df.apply(_double), input_schema=EVENTS, source_name="e")
+    udf_ops = [op for op in fp.operations if isinstance(op, Udf)]
+    assert len(udf_ops) == 1
+    assert udf_ops[0].ref.qualname.endswith("_double")
+    assert len(udf_ops[0].ref.source_hash) == 64
+
+
+def test_apply_with_same_callable_diffs_to_empty() -> None:
+    a = trace_pandas(lambda df: df.apply(_double), input_schema=EVENTS, source_name="e")
+    b = trace_pandas(lambda df: df.apply(_double), input_schema=EVENTS, source_name="e")
+    assert diff(a, b) == ()
+
+
+def test_apply_with_different_callables_surfaces_divergence() -> None:
+    a = trace_pandas(lambda df: df.apply(_double), input_schema=EVENTS, source_name="e")
+    b = trace_pandas(lambda df: df.apply(_triple), input_schema=EVENTS, source_name="e")
+    divs = diff(a, b)
+    assert divs
+    udf_divs = [d for d in divs if "udf body" in d.detail]
+    assert udf_divs, divs
+
+
+def test_apply_axis_1_is_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="axis=1"):
+        trace_pandas(lambda df: df.apply(_double, axis=1), input_schema=EVENTS, source_name="e")
+
+
+def test_apply_non_callable_is_rejected() -> None:
+    with pytest.raises(UnsupportedOperationError, match="needs a callable"):
+        trace_pandas(lambda df: df.apply("not a function"), input_schema=EVENTS, source_name="e")
 
 
 # --- THE BIG ONE: cross-framework equivalence -------------------------------

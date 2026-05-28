@@ -25,11 +25,13 @@ engine return ``()`` for cross-framework equivalent pipelines.
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from mirrorml.exceptions import UnsupportedOperationError
-from mirrorml.fingerprint.operations import Aggregate, FillNa, Filter, Project, Sort, Source
-from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta
+from mirrorml.fingerprint.operations import Aggregate, FillNa, Filter, Project, Sort, Source, Udf
+from mirrorml.fingerprint.schema import ColumnSpec, Operation, SchemaDelta, UdfRef
+from mirrorml.fingerprint.udf_hash import SOURCE_HASH_ALGORITHM, source_hash
 from mirrorml.tracers._trace_common import (
     TracePredicate,
     aggregation_output_dtype,
@@ -380,6 +382,83 @@ class _TraceFrame:
             operations=self._operations,
             last_op_id=op_id,
         )
+
+    def apply(
+        self,
+        func: object,
+        *,
+        axis: object = 0,
+        result_type: object = None,
+    ) -> _TraceFrame:
+        """Emit a :class:`Udf` op for ``df.apply(callable, axis=...)``.
+
+        Static analysis cannot decide what the callable computes, so the
+        UDF body is captured as a normalized source-hash on the
+        :class:`~mirrorml.fingerprint.schema.UdfRef`. Two pipelines that
+        apply the same callable (modulo formatting / comments) produce the
+        same fingerprint; two pipelines that apply different callables
+        produce different fingerprints, and the diff layer surfaces the
+        mismatch.
+
+        Output schema: ``axis=0`` reduces each column to a scalar (we model
+        the result as keeping the same column set, since pandas returns a
+        Series indexed by column name); ``axis=1`` reduces each row, which
+        cannot be modeled without inspecting the function and is rejected.
+        """
+
+        if axis not in (0, "index"):
+            raise UnsupportedOperationError(
+                f"pandas tracer: df.apply(axis={axis!r}) is not supported; "
+                f"axis=0 (per-column) is the only modeled form. axis=1 / "
+                f"'columns' requires inspecting the callable body and is "
+                f"deferred."
+            )
+        if result_type is not None:
+            raise UnsupportedOperationError(
+                f"pandas tracer: df.apply(result_type={result_type!r}) is "
+                f"not supported; only the default is modeled."
+            )
+        if not callable(func):
+            raise UnsupportedOperationError(
+                f"pandas tracer: df.apply(...) needs a callable; got {type(func).__name__}"
+            )
+        ref = _udf_ref(func)
+        input_columns = tuple(self._schema)
+        output_columns = input_columns  # per-column reduction keeps the column set
+        op_id = f"udf_{next_op_index(self._operations)}"
+        self._operations.append(
+            Udf(
+                op_id=op_id,
+                dependencies=(self._last_op_id,),
+                ref=ref,
+                input_columns=input_columns,
+                output_columns=output_columns,
+            )
+        )
+        return _TraceFrame(
+            schema=dict(self._schema),
+            operations=self._operations,
+            last_op_id=op_id,
+        )
+
+
+def _udf_ref(func: object) -> UdfRef:
+    """Build a :class:`UdfRef` for ``func``: source-hash plus a signature
+    string. Lambdas and C extensions raise via :func:`source_hash`.
+    """
+
+    assert callable(func)
+    qualname = getattr(func, "__qualname__", None) or getattr(func, "__name__", None) or repr(func)
+    try:
+        sig = str(inspect.signature(func))
+    except (TypeError, ValueError):
+        sig = "(?)"
+    return UdfRef(
+        qualname=str(qualname),
+        source_hash=source_hash(func),
+        signature=sig,
+        source_hash_algorithm=SOURCE_HASH_ALGORITHM,
+    )
 
 
 def _as_column_list(value: object, *, what: str) -> list[str]:

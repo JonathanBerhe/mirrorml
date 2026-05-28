@@ -227,6 +227,8 @@ def classify_op_pair(left: Operation, right: Operation) -> Iterator[Divergence]:
         yield from _classify_filter(left, right)
     elif kind == "fill_na":
         yield from _classify_fill_na(left, right)
+    elif kind == "udf":
+        yield from _classify_udf(left, right)
     else:
         yield Divergence(
             category="schema_drift",
@@ -296,6 +298,70 @@ def _classify_project(left: Operation, right: Operation) -> Iterator[Divergence]
             detail=(
                 f"project renames: {left.schema_delta.renamed} vs {right.schema_delta.renamed}"
             ),
+        )
+
+
+def _classify_udf(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two :class:`~mirrorml.fingerprint.operations.Udf` ops.
+
+    The static side cannot inspect a callable's semantics, so the
+    canonical signal is the :class:`UdfRef` source-hash: same hash means
+    the two callables normalize to the same Python source (modulo
+    whitespace / comments / docstrings). Different hashes mean the
+    bodies actually differ, which is a real divergence the diff layer
+    must surface. We route it through ``schema_drift`` as the
+    "couldn't-pin-it-to-a-finer-category" bucket; the statistical
+    companion check is the right way to upgrade the diagnosis when the
+    user wants to know whether the value-level outputs also disagree.
+
+    Input / output column-set changes are op-local and surface here too
+    (they fall under ``schema_drift`` by definition).
+    """
+
+    assert left.kind == "udf" and right.kind == "udf"
+
+    if left.ref.source_hash_algorithm != right.ref.source_hash_algorithm:
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"udf source-hash algorithm: "
+                f"{left.ref.source_hash_algorithm!r} vs "
+                f"{right.ref.source_hash_algorithm!r} (cannot compare hashes "
+                f"across algorithm versions; run a migration first)"
+            ),
+        )
+        return
+
+    if left.ref.source_hash != right.ref.source_hash:
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"udf body differs: {left.ref.qualname!r} "
+                f"({left.ref.source_hash[:12]}...) vs "
+                f"{right.ref.qualname!r} ({right.ref.source_hash[:12]}...). "
+                f"Static analysis cannot decide whether they compute the "
+                f"same value; run the statistical companion check to find out."
+            ),
+        )
+
+    if left.input_columns != right.input_columns:
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"udf input_columns: {left.input_columns} vs {right.input_columns}",
+        )
+
+    if left.output_columns != right.output_columns:
+        yield Divergence(
+            category="schema_drift",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"udf output_columns: {left.output_columns} vs {right.output_columns}",
         )
 
 
