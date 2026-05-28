@@ -30,6 +30,7 @@ from mirrorml.exceptions import UnsupportedOperationError
 from mirrorml.fingerprint.operations import (
     Aggregate,
     AsOfJoin,
+    Encode,
     FillNa,
     Filter,
     Project,
@@ -569,6 +570,62 @@ class _TraceLazyFrame:
         )
         return self._derive(dict(self._schema), op_id)
 
+    def to_dummies(
+        self,
+        columns: object = None,
+        *,
+        separator: object = "_",
+        drop_first: object = False,
+    ) -> _TraceLazyFrame:
+        """Emit an :class:`Encode` op for ``lf.to_dummies(columns=...)``.
+
+        Mirrors polars's real ``to_dummies``: each target column expands
+        into one-hot indicator columns. ``columns=None`` (the polars
+        default) one-hots every column in the frame; otherwise the
+        named columns are encoded. The captured ``categories=None``
+        signals that the category vocabulary is fit at runtime; the diff
+        classifier flags ``None vs <fixed list>`` as
+        ``categorical_encoding`` because static analysis cannot prove
+        equality.
+        """
+
+        del separator, drop_first  # informational; do not affect equivalence
+
+        if columns is None:
+            target_columns: tuple[str, ...] = tuple(self._schema)
+        elif isinstance(columns, str):
+            target_columns = (columns,)
+        elif isinstance(columns, list | tuple):
+            target_columns = tuple(c for c in columns if isinstance(c, str))
+            if len(target_columns) != len(columns):
+                raise UnsupportedOperationError(
+                    "polars tracer: lf.to_dummies(columns=...) entries must be strings."
+                )
+        else:
+            raise UnsupportedOperationError(
+                f"polars tracer: lf.to_dummies(columns=...) must be a column name, "
+                f"a list of names, or None; got {type(columns).__name__}"
+            )
+
+        for col in target_columns:
+            if col not in self._schema:
+                raise UnsupportedOperationError(
+                    f"polars tracer: to_dummies column {col!r} not in frame. "
+                    f"Available: {sorted(self._schema)}"
+                )
+
+        op_id = f"encode_{next_op_index(self._operations)}"
+        self._operations.append(
+            Encode(
+                op_id=op_id,
+                dependencies=(self._last_op_id,),
+                columns=target_columns,
+                method="one_hot",
+                categories=None,
+            )
+        )
+        return self._derive(dict(self._schema), op_id)
+
     def fill_null(self, value: object = None) -> _TraceLazyFrame:
         """Emit a :class:`FillNa` op for a constant fill over all columns.
         Only the scalar-value form is supported; strategy-based fills
@@ -931,15 +988,31 @@ def build_initial_frame(
     *,
     source_name: str,
     input_schema: tuple[ColumnSpec, ...],
+    event_time_column: str | None = None,
 ) -> tuple[_TraceLazyFrame, list[Operation]]:
     """Build the initial ``_TraceLazyFrame`` and its Source operation.
+
+    ``event_time_column`` (optional) names the column that represents
+    event-time; recorded on the Source op so the diff classifier can
+    flag ``feature_leakage_temporal`` divergences.
 
     The returned operations list is shared with the frame; derived frames
     append to it as the pipeline runs.
     """
 
+    if event_time_column is not None and event_time_column not in dict(input_schema):
+        raise UnsupportedOperationError(
+            f"polars tracer: event_time_column {event_time_column!r} is not in "
+            f"input_schema columns {[c for c, _ in input_schema]}"
+        )
+
     operations: list[Operation] = []
-    source = Source(op_id="source_0", name=source_name, columns=input_schema)
+    source = Source(
+        op_id="source_0",
+        name=source_name,
+        columns=input_schema,
+        event_time_column=event_time_column,
+    )
     operations.append(source)
 
     frame = _TraceLazyFrame(

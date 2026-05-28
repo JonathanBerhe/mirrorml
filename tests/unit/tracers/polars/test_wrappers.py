@@ -670,6 +670,53 @@ def test_polars_sample_requires_n_or_fraction() -> None:
         trace_polars(lambda lf, pl: lf.sample(), input_schema=EVENTS, source_name="e")
 
 
+# --- to_dummies (Encode) ----------------------------------------------------
+
+
+def test_to_dummies_emits_encode_op() -> None:
+    from mirrorml.fingerprint.operations import Encode
+
+    fp = trace_polars(
+        lambda lf, pl: lf.to_dummies(columns=["country"]),
+        input_schema=(("uid", "int64"), ("country", "utf8")),
+    )
+    encodes = [op for op in fp.operations if isinstance(op, Encode)]
+    assert len(encodes) == 1
+    assert encodes[0].columns == ("country",)
+    assert encodes[0].method == "one_hot"
+    assert encodes[0].categories is None  # runtime fit
+
+
+def test_to_dummies_same_columns_diffs_to_empty() -> None:
+    schema = (("uid", "int64"), ("country", "utf8"))
+    a = trace_polars(lambda lf, pl: lf.to_dummies(columns=["country"]), input_schema=schema)
+    b = trace_polars(lambda lf, pl: lf.to_dummies(columns=["country"]), input_schema=schema)
+    assert diff(a, b) == ()
+
+
+def test_to_dummies_different_columns_surfaces_categorical_encoding() -> None:
+    schema = (("uid", "int64"), ("country", "utf8"), ("city", "utf8"))
+    a = trace_polars(lambda lf, pl: lf.to_dummies(columns=["country"]), input_schema=schema)
+    b = trace_polars(lambda lf, pl: lf.to_dummies(columns=["city"]), input_schema=schema)
+    divs = diff(a, b)
+    assert [d.category for d in divs] == ["categorical_encoding"]
+
+
+def test_to_dummies_unknown_column_rejected() -> None:
+    schema = (("uid", "int64"),)
+    with pytest.raises(UnsupportedOperationError, match="bogus"):
+        trace_polars(lambda lf, pl: lf.to_dummies(columns=["bogus"]), input_schema=schema)
+
+
+def test_to_dummies_defaults_to_every_column() -> None:
+    from mirrorml.fingerprint.operations import Encode
+
+    schema = (("uid", "int64"), ("country", "utf8"))
+    fp = trace_polars(lambda lf, pl: lf.to_dummies(), input_schema=schema)
+    encode = next(op for op in fp.operations if isinstance(op, Encode))
+    assert encode.columns == ("uid", "country")
+
+
 # --- cross-framework equivalence (third framework) --------------------------
 
 

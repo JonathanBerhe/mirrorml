@@ -251,6 +251,8 @@ def classify_op_pair(left: Operation, right: Operation) -> Iterator[Divergence]:
         yield from _classify_udf(left, right)
     elif kind == "sample":
         yield from _classify_sample(left, right)
+    elif kind == "encode":
+        yield from _classify_encode(left, right)
     else:
         yield Divergence(
             category="schema_drift",
@@ -319,6 +321,52 @@ def _classify_project(left: Operation, right: Operation) -> Iterator[Divergence]
             right_op_id=right.op_id,
             detail=(
                 f"project renames: {left.schema_delta.renamed} vs {right.schema_delta.renamed}"
+            ),
+        )
+
+
+def _classify_encode(left: Operation, right: Operation) -> Iterator[Divergence]:
+    """Compare two :class:`~mirrorml.fingerprint.operations.Encode` ops.
+
+    Any difference in encoding method, target columns, or the captured
+    ``categories`` list is a ``categorical_encoding`` divergence: the two
+    pipelines encode categoricals differently, which is one of the most
+    common training-serving skews (offline ``OneHotEncoder`` against a
+    fixed vocabulary that the online pipeline does not share).
+
+    ``categories=None`` on one side and a list on the other still
+    counts: the unbounded side cannot prove it produces the same
+    encoding, which is itself the divergence.
+    """
+
+    assert left.kind == "encode" and right.kind == "encode"
+
+    if left.method != right.method:
+        yield Divergence(
+            category="categorical_encoding",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"encode method: {left.method!r} vs {right.method!r}",
+        )
+
+    if left.columns != right.columns:
+        yield Divergence(
+            category="categorical_encoding",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=f"encode columns: {left.columns} vs {right.columns}",
+        )
+
+    if left.categories != right.categories:
+        yield Divergence(
+            category="categorical_encoding",
+            left_op_id=left.op_id,
+            right_op_id=right.op_id,
+            detail=(
+                f"encode categories: {left.categories!r} vs {right.categories!r}. "
+                f"A `None` (runtime-fit) categories list on either side cannot "
+                f"prove equality with the other; pin the categories explicitly "
+                f"or rely on the statistical companion check."
             ),
         )
 
