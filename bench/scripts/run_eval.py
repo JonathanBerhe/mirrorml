@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from bench.scripts.pair import Pair, discover_pairs, load_pair
+from bench.scripts.stats_check import statistically_check_pair
 from mirrorml import diff
 from mirrorml._taxonomy import DIVERGENCE_CATEGORIES
 
@@ -55,11 +56,18 @@ class PairResult:
     fp: int
     fn: int
     is_identity: bool
+    # Statistical companion check, reported alongside the static diff. One of
+    # "equivalent", "not_equivalent", or "skipped" (shape the in-process
+    # executor cannot handle; see bench/scripts/stats_check.py). Defaults
+    # to "skipped" so callers constructing PairResult by hand are unaffected.
+    stats_status: str = "skipped"
+    stats_detail: str = ""
 
 
 def evaluate_pair(pair: Pair) -> PairResult:
-    """Diff the pair's two fingerprints and score the prediction against
-    the expected divergence categories.
+    """Diff the pair's two fingerprints, score the prediction against the
+    expected divergence categories, and run the statistical companion check
+    on a small generated fixture.
     """
 
     divergences = diff(pair.offline, pair.online)
@@ -72,6 +80,17 @@ def evaluate_pair(pair: Pair) -> PairResult:
     fp = len(predicted - expected)
     fn = len(expected - predicted)
 
+    stats_result, stats_reason = statistically_check_pair(pair.path)
+    if stats_result is None:
+        stats_status = "skipped"
+        stats_detail = stats_reason
+    elif stats_result.equivalent:
+        stats_status = "equivalent"
+        stats_detail = ""
+    else:
+        stats_status = "not_equivalent"
+        stats_detail = stats_result.detail
+
     return PairResult(
         name=pair.name,
         bucket=pair.bucket,
@@ -82,6 +101,8 @@ def evaluate_pair(pair: Pair) -> PairResult:
         fp=fp,
         fn=fn,
         is_identity=is_identity,
+        stats_status=stats_status,
+        stats_detail=stats_detail,
     )
 
 
@@ -129,6 +150,19 @@ def aggregate(results: list[PairResult]) -> dict[str, Any]:
             "recall": _safe_div(b["tp"], b["tp"] + b["fn"]),
         }
 
+    stats_equivalent = sum(1 for r in results if r.stats_status == "equivalent")
+    stats_not_equivalent = sum(1 for r in results if r.stats_status == "not_equivalent")
+    stats_skipped = sum(1 for r in results if r.stats_status == "skipped")
+    stats_runnable = stats_equivalent + stats_not_equivalent
+    # "Agreement" between the static diff and the statistical companion:
+    # when stats actually ran, do they agree on whether the pair diverges?
+    stats_agreed = sum(
+        1
+        for r in results
+        if r.stats_status != "skipped"
+        and bool(r.predicted_categories) == (r.stats_status == "not_equivalent")
+    )
+
     return {
         "headline": {
             "pairs": len(results),
@@ -144,6 +178,14 @@ def aggregate(results: list[PairResult]) -> dict[str, Any]:
             "clean": identity_clean,
             "precision": identity_precision,
         },
+        "stats": {
+            "runnable": stats_runnable,
+            "equivalent": stats_equivalent,
+            "not_equivalent": stats_not_equivalent,
+            "skipped": stats_skipped,
+            "agreed_with_static": stats_agreed,
+            "agreement_rate": _safe_div(stats_agreed, stats_runnable),
+        },
         "by_category": category_metrics,
         "by_pair": [
             {
@@ -154,6 +196,7 @@ def aggregate(results: list[PairResult]) -> dict[str, Any]:
                 "tp": r.tp,
                 "fp": r.fp,
                 "fn": r.fn,
+                "stats": {"status": r.stats_status, "detail": r.stats_detail},
             }
             for r in results
         ],
@@ -240,11 +283,14 @@ def main(argv: list[str] | None = None) -> int:
             json.dump(summary, f, indent=2, sort_keys=False)
             f.write("\n")
         head = summary["headline"]
+        stats = summary["stats"]
         print(
             f"[{bucket}] pairs={head['pairs']} "
             f"precision={head['precision']:.3f} "
             f"recall={head['recall']:.3f} "
             f"f1={head['f1']:.3f} "
+            f"stats_agreed={stats['agreed_with_static']}/{stats['runnable']} "
+            f"(skipped={stats['skipped']}) "
             f"-> {out_path.relative_to(REPO_ROOT)}"
         )
         bucket_summaries.append((bucket, summary))
