@@ -1,0 +1,111 @@
+name: Release
+
+# Tag-triggered release: pushing an annotated tag like ``v0.1.0`` builds
+# the sdist + wheel via hatchling, runs the full CI verification chain
+# (lint / typecheck / test / bench) one last time on the tagged commit,
+# and uploads to PyPI via trusted publishing (OIDC, no API token in CI
+# secrets). The job is intentionally manual-trigger-friendly via
+# ``workflow_dispatch`` so a maintainer can replay a release without
+# re-tagging.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and publish (e.g. v0.1.0)"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify (lint / typecheck / test / bench)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install dev + all extras
+        run: uv sync --dev --all-extras
+      - name: Ruff lint + format
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Mypy strict
+        run: uv run mypy
+      - name: Pytest
+        run: uv run pytest -q
+      - name: Bench (synthetic, with all gates)
+        run: |
+          uv run python -m bench.scripts.run_eval --quick \
+            --fail-under-precision 0.95 \
+            --fail-under-recall 0.80 \
+            --fail-under-localization-top1 0.75
+
+  build:
+    name: Build sdist + wheel
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Build
+        run: uv build
+      - name: Inspect artifacts
+        run: |
+          ls -lh dist/
+          uv run python -c "import tarfile, zipfile, pathlib
+          for p in sorted(pathlib.Path('dist').iterdir()):
+              print(p.name, p.stat().st_size, 'bytes')"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Trusted publishing requires the workflow to declare ``id-token: write``
+    # AND the PyPI project to be configured to trust this exact workflow.
+    # Until that one-time PyPI configuration is done, this job will fail at
+    # the upload step with a clear "trusted publisher not configured"
+    # message; configure once at https://pypi.org/manage/account/publishing/
+    # and subsequent tag pushes publish automatically.
+    permissions:
+      id-token: write
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mirrorml/
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI (OIDC trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # No password: trusted publishing uses OIDC.
