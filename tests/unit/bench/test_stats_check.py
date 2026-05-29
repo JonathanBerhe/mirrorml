@@ -118,12 +118,38 @@ def test_sql_multi_table_join_passes_all_fixtures_to_executor() -> None:
     assert result is not None and result.equivalent
 
 
-def test_window_pair_is_skipped_with_reason() -> None:
+def test_window_pair_runs_via_polars_fallback() -> None:
+    """SQL window-function pairs no longer skip: the executor's
+    trailing-ROWS-frame limitation is bypassed by a focused polars
+    translator that handles the bench's window shape."""
+
     result, reason = statistically_check_pair(
         SYN / "window_size_mismatch" / "window_size_mismatch_000"
     )
-    assert result is None
-    assert "window" in reason or "skipped" in reason
+    assert reason == "", reason
+    assert result is not None
+
+
+def test_polars_sample_pair_runs_via_dataframe_retry() -> None:
+    """``lf.sample(...)`` is DataFrame-only in polars; the stats path
+    auto-retries with an eager DataFrame on AttributeError so seed-mismatch
+    pairs run end to end."""
+
+    result, reason = statistically_check_pair(
+        SYN / "seed_mismatch" / "seed_mismatch_polars_different_seeds"
+    )
+    assert reason == "", reason
+    assert result is not None
+
+
+def test_polars_to_dummies_pair_runs_via_dataframe_retry() -> None:
+    """``lf.to_dummies(...)`` is DataFrame-only; same auto-retry handles it."""
+
+    result, reason = statistically_check_pair(
+        SYN / "categorical_encoding" / "categorical_encoding_different_columns"
+    )
+    assert reason == "", reason
+    assert result is not None
 
 
 def test_multi_table_join_pair_runs_via_multi_table_fixture() -> None:

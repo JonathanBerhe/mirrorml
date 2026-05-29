@@ -147,13 +147,38 @@ def test_statistical_check_sql_divergent_queries() -> None:
     assert "score" in result.detail
 
 
-def test_statistical_check_sql_window_function_is_rejected() -> None:
-    fixture = {"uid": [1, 2], "score": [1.0, 2.0]}
+def test_statistical_check_sql_trailing_rows_window_runs_via_polars_fallback() -> None:
+    """Trailing-ROWS-frame window functions used to be rejected because
+    sqlglot's executor does not support them; the SQL stats path now
+    falls back to a focused polars translator for that shape, so the
+    same query on both sides comes back equivalent."""
+
+    fixture = {
+        "uid": [1, 1, 1, 2, 2, 2],
+        "ts": [1, 2, 3, 1, 2, 3],
+        "score": [10.0, 20.0, 30.0, 5.0, 15.0, 25.0],
+    }
     query = (
-        "SELECT uid, AVG(score) OVER (PARTITION BY uid ORDER BY score "
+        "SELECT uid, ts, AVG(score) OVER (PARTITION BY uid ORDER BY ts "
         "ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS roll FROM events"
     )
-    with pytest.raises(UnsupportedOperationError, match="window functions"):
+    result = statistical_check(query, query, fixture, framework="sql", source_name="events")
+    assert result.equivalent, result.detail
+
+
+def test_statistical_check_sql_unsupported_window_shape_still_rejected() -> None:
+    """RANGE frames (and other shapes outside the bench's vocabulary) are
+    not translated; the stats path raises so the bench reports an honest
+    skip rather than silently returning wrong values."""
+
+    fixture = {"uid": [1, 2], "score": [1.0, 2.0]}
+    # RANGE BETWEEN ... uses ts-distance semantics that the focused
+    # translator deliberately does not handle.
+    query = (
+        "SELECT uid, AVG(score) OVER (PARTITION BY uid ORDER BY score "
+        "RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) AS roll FROM events"
+    )
+    with pytest.raises(UnsupportedOperationError, match="no fallback shape matched"):
         statistical_check(query, query, fixture, framework="sql", source_name="events")
 
 
