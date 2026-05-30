@@ -166,6 +166,35 @@ def test_statistical_check_sql_trailing_rows_window_runs_via_polars_fallback() -
     assert result.equivalent, result.detail
 
 
+def test_statistical_check_sql_unbounded_preceding_window_uses_cumulative_branch() -> None:
+    """The polars fallback covers two frame shapes: bounded
+    ``<n> PRECEDING`` (``rolling_*``) and ``UNBOUNDED PRECEDING``
+    (cumulative). Pin the cumulative branch end-to-end so an accidental
+    integer-division or dtype-promotion regression in cum_sum/cum_count
+    surfaces here rather than silently in the bench.
+    """
+
+    from collections.abc import Mapping, Sequence
+
+    from mirrorml.stats import _try_sql_window_via_polars
+
+    fixture: Mapping[str, Sequence[float]] = {
+        "uid": [1, 1, 1, 2, 2, 2],
+        "ts": [1, 2, 3, 1, 2, 3],
+        "score": [10.0, 20.0, 30.0, 5.0, 15.0, 25.0],
+    }
+    query = (
+        "SELECT uid, ts, AVG(score) OVER (PARTITION BY uid ORDER BY ts "
+        "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS roll FROM events"
+    )
+    result = _try_sql_window_via_polars(query, {"events": fixture})
+    assert result is not None
+    # Per partition: cumulative mean of (10, 20, 30) = (10, 15, 20);
+    # of (5, 15, 25) = (5, 10, 15). Confirms cum_sum / cum_count gives
+    # float division, not int division.
+    assert result["roll"] == [10.0, 15.0, 20.0, 5.0, 10.0, 15.0]
+
+
 def test_statistical_check_sql_unsupported_window_shape_still_rejected() -> None:
     """RANGE frames (and other shapes outside the bench's vocabulary) are
     not translated; the stats path raises so the bench reports an honest

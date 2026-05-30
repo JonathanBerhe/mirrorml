@@ -194,11 +194,14 @@ def run_pipeline(
         except AttributeError as exc:
             # Several polars methods are ``DataFrame``-only (``sample``,
             # ``to_dummies``, etc.); the pipeline reaches for them on a
-            # ``LazyFrame`` and explodes. Retry once with an eager frame:
-            # nearly every LazyFrame method also exists on DataFrame, so
-            # the same pipeline runs unchanged. Side-effect-free pipelines
-            # (the bench's are deterministic) are unaffected by the retry.
-            if "no attribute" not in str(exc):
+            # ``LazyFrame`` and explodes. Retry once with an eager frame
+            # iff the failure is specifically that polars's LazyFrame
+            # lacks the attribute. We do NOT swallow generic
+            # AttributeErrors (e.g. a typo inside a user UDF) -- those
+            # would silently re-run the pipeline. Side-effect-free
+            # pipelines (the bench's are deterministic) are unaffected
+            # by the retry.
+            if "'LazyFrame' object has no attribute" not in str(exc):
                 raise
             collected = _invoke(pl.DataFrame(columns))
         return _to_columns(collected)
@@ -278,18 +281,19 @@ def _run_sql(
                 continue
             tables[aux_name] = _columns_to_rows(aux_columns)
 
-    all_columns: dict[str, Mapping[str, Sequence[Any]]] = {source_name: columns}
-    if aux_sources:
-        for aux_name, aux_columns in aux_sources.items():
-            if aux_name != source_name:
-                all_columns[aux_name] = aux_columns
-
     try:
         result = executor.execute(query, tables=tables)
     except ExecuteError as exc:
         # The bench's window-function pairs trip sqlglot's executor; try
         # the trailing-ROWS-frame polars translator before giving up.
-        fallback = _try_sql_window_via_polars(query, all_columns)
+        # Building the column-oriented view of every input table is only
+        # needed for the fallback, so defer it until the executor fails.
+        fallback_columns: dict[str, Mapping[str, Sequence[Any]]] = {source_name: columns}
+        if aux_sources:
+            for aux_name, aux_columns in aux_sources.items():
+                if aux_name != source_name:
+                    fallback_columns[aux_name] = aux_columns
+        fallback = _try_sql_window_via_polars(query, fallback_columns)
         if fallback is not None:
             return fallback
         raise UnsupportedOperationError(
@@ -321,15 +325,23 @@ def _try_sql_window_via_polars(
         ) AS <alias>
         FROM <table>
 
-    Where ``<agg>`` is one of ``AVG, SUM, MIN, MAX, COUNT``.
+    Aggregation support:
+
+    * ``UNBOUNDED PRECEDING`` (cumulative): AVG, SUM, MIN, MAX, COUNT.
+    * ``<n> PRECEDING`` (rolling, window_size = n + 1): AVG, SUM, MIN, MAX.
+      Bounded ``COUNT`` would need ``rolling_map`` over a per-window
+      length, which the translator does not yet implement; bounded
+      ``COUNT`` queries fall through to the caller's
+      ``UnsupportedOperationError``.
     """
 
     import polars as pl
     from sqlglot import exp, parse_one
+    from sqlglot.errors import ParseError
 
     try:
         ast = parse_one(query)
-    except Exception:
+    except ParseError:
         return None
     if not isinstance(ast, exp.Select):
         return None
@@ -387,7 +399,10 @@ def _try_sql_window_via_polars(
     else:
         return None
 
-    from_ = ast.args.get("from_") or ast.args.get("from")
+    # sqlglot >= 11 uses "from_" as the args key (verified against the pinned
+    # version). The historical "from" alias is no longer emitted, so we no
+    # longer probe for it.
+    from_ = ast.args.get("from_")
     if from_ is None or not isinstance(from_.this, exp.Table):
         return None
     table_name = from_.this.name
