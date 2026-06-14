@@ -20,11 +20,12 @@ cross-framework promise holds end to end: an equivalent pandas, Polars, or SQL
 pipeline produces fingerprints that `diff()` to empty, and a real difference is
 classified and localized to the responsible operation.
 
-The diff engine currently detects 11 of the 15 taxonomy categories. The
-remaining four (categorical encoding, unit mismatch, temporal feature leakage,
-seed mismatch) need runtime or whole-graph information and are planned alongside
-the statistical companion check. Benchmark numbers to date are in-distribution
-(the synthetic corpus); a real-world and replayed-incident corpus is in progress.
+The diff engine reaches all fifteen taxonomy categories, and a statistical
+companion check runs every synthetic pair alongside the static diff. Benchmark
+numbers to date are in-distribution: the synthetic corpus exercises all fifteen
+categories, and four incidents reconstructed from peer-reviewed reports of
+production skew are recovered. A mined real-world corpus is future work, so
+real-world precision and recall are not yet measured.
 
 ## Install
 
