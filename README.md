@@ -26,6 +26,10 @@ example: a different time zone, a different rounding, adding numbers up where th
 other averages them, or handling missing values differently). It works by reading
 the code, so it does not need to run the pipelines or have any real data.
 
+MirrorML checks only the feature code, the part that prepares a model's inputs.
+Whatever you train the model with afterward (PyTorch, JAX, XGBoost, or anything
+else) runs later and is outside what MirrorML looks at.
+
 ## Status
 
 Early development (`v0.0.1`). The core works end to end. MirrorML can read
