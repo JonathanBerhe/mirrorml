@@ -1,31 +1,46 @@
 # MirrorML
 
-> Great Expectations is for your data. MirrorML is for your pipelines.
+> Find the bugs that make a machine learning model behave differently in testing
+> than it does in production.
 
-MirrorML is a static-analysis library for detecting **training-serving skew** in
-machine learning feature pipelines. Given two pipelines that should compute the
-same features (typically one offline for training and one online for serving),
-MirrorML produces a *semantic fingerprint* of each and reports whether they are
-equivalent. When they diverge, MirrorML localizes the divergence to the
-responsible operation and classifies it into one of fifteen well-defined
-categories (window boundary mismatches, timezone handling, as-of join direction,
-aggregation-function swaps, null handling, and so on).
+MirrorML checks whether two data pipelines that are supposed to compute the same
+thing actually do.
+
+Here is the problem it solves. A machine learning model learns from "features":
+the input numbers fed into it. Those numbers are usually computed twice, by two
+separate pieces of code: once over saved historical data while the model is being
+trained, and again over live data while the model is running for real users.
+These two pieces of code are often written by different people, in different
+languages, at different times. When they fall out of sync even slightly (one
+rounds a number differently, one fills in missing values differently, one
+averages over a different time range), the model quietly makes worse predictions
+in production than it did in testing. This mismatch is called **training-serving
+skew**. Because nothing crashes and no error is raised, it can go unnoticed for a
+long time.
+
+MirrorML reads both pieces of code and builds a short summary of what each one
+does, called a *fingerprint*. It then compares the two summaries. If they match,
+the pipelines are equivalent and there is no skew. If they do not, MirrorML points
+to the exact step that differs and labels what kind of difference it is (for
+example: a different time zone, a different rounding, adding numbers up where the
+other averages them, or handling missing values differently). It works by reading
+the code, so it does not need to run the pipelines or have any real data.
 
 ## Status
 
-Pre-alpha (`v0.0.1`). The fingerprint schema is the locked public contract. All
-three tracers (pandas, Polars, SQL), the diff engine, the MirrorBench evaluation
-harness, and the `trace` / `diff` / `verify` CLI commands are implemented. The
-cross-framework promise holds end to end: an equivalent pandas, Polars, or SQL
-pipeline produces fingerprints that `diff()` to empty, and a real difference is
-classified and localized to the responsible operation.
+Early development (`v0.0.1`). The core works end to end. MirrorML can read
+pipelines written in pandas, Polars, or SQL (three common ways to work with
+tables of data in Python and databases), summarize each one, compare them, and
+point to the step that differs. The same pipeline written in any of the three
+produces the same summary, so a training pipeline written in one language can be
+checked against a production pipeline written in another.
 
-The diff engine reaches all fifteen taxonomy categories, and a statistical
-companion check runs every synthetic pair alongside the static diff. Benchmark
-numbers to date are in-distribution: the synthetic corpus exercises all fifteen
-categories, and four incidents reconstructed from peer-reviewed reports of
-production skew are recovered. A mined real-world corpus is future work, so
-real-world precision and recall are not yet measured.
+MirrorML recognizes all fifteen kinds of difference it sets out to catch. As a
+second, independent check, it can also run both pipelines on a small batch of
+generated data and compare the actual results. So far it has been tested mainly
+on examples we created ourselves, plus four real-world bugs rebuilt from
+published reports. Testing on pipelines collected from public projects is still
+to come, so there are not yet accuracy numbers from real-world use.
 
 ## Install
 
@@ -43,10 +58,15 @@ uv add 'mirrorml[pandas]'    # pandas tracer
 uv add 'mirrorml[polars]'    # Polars tracer
 ```
 
-The core install does not depend on pandas or Polars. Tracers are lazy-imported
-so `import mirrorml` stays under the 200ms cold-start budget.
+The core install does not require pandas or Polars. Each one is loaded only when
+you actually use its tracer, so `import mirrorml` stays fast.
 
 ## Quickstart
+
+The example below takes a training pipeline written in pandas and a production
+pipeline written in SQL, and confirms they compute the same thing. Then it
+changes the SQL side to add scores up instead of averaging them, and MirrorML
+reports the difference and where it is.
 
 ```python
 from mirrorml import diff, trace_pandas, trace_sql
@@ -99,8 +119,9 @@ mirrorml trace path/to/pair --side offline -o offline.json
 # Diff two on-disk fingerprints (exit 1 if they diverge)
 mirrorml diff offline.json online.json
 
-# Trace both sides of a pair, diff, and check against its expected
-# divergences; exits non-zero on mismatch (the CI primitive)
+# Trace both sides of a pair, diff them, and check the result against the
+# differences the pair says to expect; exits with an error code on a
+# mismatch, so it can run as an automated check
 mirrorml verify path/to/pair
 ```
 
