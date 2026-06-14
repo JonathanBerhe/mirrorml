@@ -45,13 +45,6 @@ dependencies = [
 [project.optional-dependencies]
 pandas = ["pandas>=2.0"]
 polars = ["polars>=0.20"]
-dev = [
-    "pytest>=8",
-    "pytest-benchmark>=4",
-    "hypothesis>=6",
-    "mypy>=1.10",
-    "ruff>=0.5",
-]
 
 [project.scripts]
 mirrorml = "mirrorml.cli.app:app"
@@ -128,6 +121,15 @@ markers = [
 ]
 
 [dependency-groups]
+# Dev tooling lives here (PEP 735), not in an installable extra, so
+# `uv sync --dev` is the single source of truth for the dev environment.
+# Runtime extras (pandas, polars) stay under [project.optional-dependencies]
+# because they are user-facing install options.
 dev = [
+    "pytest>=8",
+    "pytest-benchmark>=4",
+    "hypothesis>=6",
+    "mypy>=1.10",
+    "ruff>=0.5",
     "types-pyyaml>=6.0.12.20260518",
 ]

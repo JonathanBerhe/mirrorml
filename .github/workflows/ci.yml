@@ -26,8 +26,8 @@ jobs:
           cache-dependency-glob: "uv.lock"
       - name: Set up Python
         run: uv python install 3.12
-      - name: Install dev + all extras
-        run: uv sync --dev --all-extras
+      - name: Install dev tooling
+        run: uv sync --dev
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 

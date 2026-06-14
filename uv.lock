@@ -318,13 +318,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "hypothesis" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-benchmark" },
-    { name = "ruff" },
-]
 pandas = [
     { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "pandas", version = "3.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -335,29 +328,36 @@ polars = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "hypothesis" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-benchmark" },
+    { name = "ruff" },
     { name = "types-pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6" },
     { name = "libcst", specifier = ">=1.1" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2.0" },
     { name = "polars", marker = "extra == 'polars'", specifier = ">=0.20" },
     { name = "pydantic", specifier = ">=2.6" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "pytest-benchmark", marker = "extra == 'dev'", specifier = ">=4" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "rich", specifier = ">=13" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "sqlglot", specifier = ">=23" },
     { name = "typer", specifier = ">=0.12" },
 ]
-provides-extras = ["pandas", "polars", "dev"]
+provides-extras = ["pandas", "polars"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "types-pyyaml", specifier = ">=6.0.12.20260518" }]
+dev = [
+    { name = "hypothesis", specifier = ">=6" },
+    { name = "mypy", specifier = ">=1.10" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-benchmark", specifier = ">=4" },
+    { name = "ruff", specifier = ">=0.5" },
+    { name = "types-pyyaml", specifier = ">=6.0.12.20260518" },
+]
 
 [[package]]
 name = "mypy"
