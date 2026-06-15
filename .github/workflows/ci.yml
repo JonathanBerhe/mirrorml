@@ -82,9 +82,9 @@ jobs:
         run: uv sync --dev
       - name: Run evaluator with regression gates
         env:
-          # CLAUDE.md targets. Failing CI on a drop below either means
-          # the change either regressed the diff classifier or made the
-          # synthetic corpus harder without updating expectations.
+          # Project precision/recall targets. Failing CI on a drop below
+          # either means the change either regressed the diff classifier or
+          # made the synthetic corpus harder without updating expectations.
           PRECISION_GATE: "0.95"
           RECALL_GATE: "0.80"
         run: |
@@ -93,6 +93,8 @@ jobs:
             --fail-under-precision "$PRECISION_GATE" \
             --fail-under-recall "$RECALL_GATE" \
             --github-step-summary "$GITHUB_STEP_SUMMARY"
+      - name: Run the demo end to end (smoke test)
+        run: uv run python demo/check.py
       - name: Upload bench results
         if: always()
         uses: actions/upload-artifact@v7
