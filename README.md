@@ -39,9 +39,11 @@ point to the step that differs. The same pipeline written in any of the three
 produces the same summary, so a training pipeline written in one language can be
 checked against a production pipeline written in another.
 
-MirrorML recognizes all fifteen kinds of difference it sets out to catch. As a
-second, independent check, it can also run both pipelines on a small batch of
-generated data and compare the actual results. So far it has been tested mainly
+MirrorML recognizes all fifteen kinds of difference it sets out to catch; the
+[category support matrix](docs/concepts/category_support.md) lists exactly which
+pipeline patterns trigger each one. As a second, independent check, it can also
+run both pipelines on a small batch of generated data and compare the actual
+results. So far it has been tested mainly
 on examples we created ourselves, plus four real-world bugs rebuilt from
 published reports. Testing on pipelines collected from public projects is still
 to come, so there are not yet accuracy numbers from real-world use.
