@@ -29,13 +29,13 @@ Every divergence comes from one of three signals:
 
 | Category | Signal | Tracers that can trigger it | Not yet traced |
 |---|---|---|---|
-| `timezone_mismatch` | schema dtype diff (timestamp timezone) | pandas, Polars, SQL | — |
-| `type_coercion` | schema dtype diff (base dtype) | pandas, Polars, SQL | — |
-| `rounding_precision` | schema dtype diff (time unit, or decimal precision/scale) | pandas, Polars, SQL | — |
+| `timezone_mismatch` | schema dtype diff (timestamp timezone) | pandas, Polars, SQL | None |
+| `type_coercion` | schema dtype diff (base dtype) | pandas, Polars, SQL | None |
+| `rounding_precision` | schema dtype diff (time unit, or decimal precision/scale) | pandas, Polars, SQL | None |
 | `unit_mismatch` | schema dtype diff (`{measurement_unit}` suffix) | pandas, Polars, SQL | automatic unit inference; units must be declared in the schema |
-| `aggregation_function` | `Aggregate` op (reduction function) | pandas, Polars, SQL | — |
-| `ordering_dependence` | `Sort` op (keys or direction) | pandas, Polars, SQL | — |
-| `schema_drift` | column add / drop / rename, operation-count mismatch, or a same-kind op difference no finer category fits | pandas, Polars, SQL | — |
+| `aggregation_function` | `Aggregate` op (reduction function) | pandas, Polars, SQL | None |
+| `ordering_dependence` | `Sort` op (keys or direction) | pandas, Polars, SQL | None |
+| `schema_drift` | column add / drop / rename, operation-count mismatch, or a same-kind op difference no finer category fits | pandas, Polars, SQL | None |
 | `null_handling` | `FillNa` op (value, columns, strategy), or a filter predicate referencing NULL | pandas, Polars (FillNa); any tracer (NULL filter) | imputers that fit at runtime (for example sklearn `SimpleImputer`) |
 | `window_size_mismatch` | `Window` op (frame size) | Polars (`rolling`), SQL (trailing `ROWS` frame) | pandas |
 | `window_boundary` | `Window` op (`closed` boundary) | Polars (`rolling(closed=...)`) | pandas; SQL `ROWS` frames do not carry a closed-boundary semantic |
@@ -47,10 +47,11 @@ Every divergence comes from one of three signals:
 
 ## Reading the matrix
 
-The first eight rows are detected at the schema or common-operation level and
-behave consistently across every tracer. The remaining seven depend on a
-specific operation that a specific tracer emits today; the "Not yet traced"
-column lists the patterns that fall outside current coverage.
+The first seven rows are detected at the schema or common-operation level and
+behave consistently across every tracer. The remaining eight depend on a
+specific operation that a specific tracer emits today (starting with
+`null_handling`, whose `FillNa` path is pandas and Polars only); the "Not yet
+traced" column lists the patterns that fall outside current coverage.
 
 Broadening a category (adding a new trigger, such as pandas `get_dummies` for
 `categorical_encoding`) is demand-driven: it lands when a pipeline that needs it
