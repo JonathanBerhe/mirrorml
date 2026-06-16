@@ -10,8 +10,12 @@ The fingerprint schema is versioned independently of the package (see
 
 ## [Unreleased]
 
-The project has not yet been published to PyPI. This section describes the
-state that will become the first published release.
+## [0.1.0]
+
+First tagged version: the public API and fingerprint schema are usable and
+covered by tests, but the library is still in early development (0.x), so the
+public surface may still change before 1.0.0. Install from source; not yet
+published to PyPI.
 
 ### Added
 

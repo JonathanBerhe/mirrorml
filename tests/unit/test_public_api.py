@@ -25,7 +25,7 @@ def test_every_public_name_is_importable() -> None:
 
 
 def test_version_is_set() -> None:
-    assert mirrorml.__version__ == "0.0.1"
+    assert mirrorml.__version__ == "0.1.0"
 
 
 def test_pandas_and_polars_are_not_imported_eagerly() -> None:

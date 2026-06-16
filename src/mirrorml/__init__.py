@@ -1,8 +1,7 @@
 """MirrorML — static detection of training-serving skew in ML feature pipelines.
 
-Public API — the seven names below are the entire stable surface as of
-v0.0.1. Anything not in :data:`__all__` is internal and may change without
-notice.
+The seven names below are the entire stable public surface as of v0.1.0.
+Anything not in :data:`__all__` is internal and may change without notice.
 
 - :class:`Fingerprint` — canonical representation of a pipeline.
 - :func:`fingerprint` — construct a :class:`Fingerprint`.
@@ -11,9 +10,9 @@ notice.
 - :func:`trace_pandas`, :func:`trace_polars`, :func:`trace_sql` — per-
   framework tracers.
 
-The constructor :func:`fingerprint` and the type :class:`Fingerprint` are
-fully implemented; :func:`diff`, the tracers, and the CLI subcommands raise
-:class:`NotImplementedError` in v0.0.1 and land in M2 / M3 / M5.
+All seven names are implemented: the tracers lower pandas, Polars, and SQL
+pipelines into fingerprints, :func:`diff` classifies and localizes their
+divergences, and the CLI exposes ``trace`` / ``diff`` / ``verify``.
 
 Note: ``mirrorml.fingerprint`` is both the public constructor function and
 the implementation subpackage. Attribute access (``mirrorml.fingerprint``)
@@ -37,4 +36,4 @@ __all__ = [
     "trace_polars",
     "trace_sql",
 ]
-__version__ = "0.0.1"
+__version__ = "0.1.0"

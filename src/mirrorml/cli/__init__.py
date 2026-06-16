@@ -1,8 +1,7 @@
 """MirrorML command-line interface.
 
-In v0.0.1 the CLI exposes only ``--version`` and ``--help``. Subcommands
-(``trace``, ``diff``, ``verify``) land in M5 once the tracers and diff
-engine are implemented.
+The CLI exposes the ``trace``, ``diff``, and ``verify`` subcommands (plus
+``--version`` and ``--help``).
 """
 
 from __future__ import annotations

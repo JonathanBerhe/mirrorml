@@ -1,9 +1,8 @@
 """Per-framework tracers — turn feature pipelines into fingerprints.
 
 The three public tracers are :func:`trace_pandas`, :func:`trace_polars`, and
-:func:`trace_sql`. All three are stubs in v0.0.1 and land in M2 along with
-the tracing harnesses they need (libcst-based source capture for pandas /
-Polars; sqlglot for SQL).
+:func:`trace_sql`. pandas and Polars are traced with wrapper objects that
+record operations; SQL is parsed with sqlglot.
 
 Tracers must remain lazy with respect to their target frameworks: importing
 this package must not import pandas or polars eagerly (the < 200ms
