@@ -1,4 +1,4 @@
-"""Per-framework tracers — turn feature pipelines into fingerprints.
+"""Per-framework tracers: turn feature pipelines into fingerprints.
 
 The three public tracers are :func:`trace_pandas`, :func:`trace_polars`, and
 :func:`trace_sql`. pandas and Polars are traced with wrapper objects that

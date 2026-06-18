@@ -1,4 +1,4 @@
-"""Divergence taxonomy — the closed set of fifteen categories. INTERNAL.
+"""Divergence taxonomy: the closed set of fifteen categories. INTERNAL.
 
 Definitive prose definitions live in ``docs/concepts/divergence_taxonomy.md``.
 Adding a category requires: a doc update, a classifier rule in

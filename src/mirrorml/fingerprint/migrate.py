@@ -1,4 +1,4 @@
-"""Schema version migration. Stub in v1.0.0 — only one version exists.
+"""Schema version migration. Stub in v1.0.0: only one version exists.
 
 When the schema version advances, register an upgrade path here that takes a
 raw ``dict`` of one version and returns one shaped for the latest

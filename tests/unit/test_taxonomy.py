@@ -16,7 +16,7 @@ def test_taxonomy_has_exactly_fifteen_categories() -> None:
 def test_taxonomy_tuple_matches_literal() -> None:
     """DIVERGENCE_CATEGORIES and DivergenceCategory must agree.
 
-    They are two views of the same closed set — one runtime-iterable, one
+    They are two views of the same closed set: one runtime-iterable, one
     static-typeable. Drift between them is a silent landmine; this test is
     the trip-wire.
     """

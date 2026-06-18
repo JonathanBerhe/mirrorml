@@ -1,9 +1,9 @@
-"""Top-level fingerprint schema — the public contract.
+"""Top-level fingerprint schema: the public contract.
 
 A :class:`Fingerprint` captures four dimensions along which two pipelines
 could disagree (operation graph, parameters, schema effects, temporal
-semantics) and exposes :attr:`Fingerprint.fingerprint_id` — a SHA-256 of the
-canonical encoding — as a single value safe for equality comparison in CI.
+semantics) and exposes :attr:`Fingerprint.fingerprint_id`, a SHA-256 of the
+canonical encoding, as a single value safe for equality comparison in CI.
 
 This module is intentionally the project's stable spine. Pydantic models are
 ``frozen=True, extra="forbid"`` so fingerprints are hashable and forward-
@@ -109,7 +109,7 @@ class UdfRef(BaseModel):
 
 
 class _OpBase(BaseModel):
-    """Shared base for every operation model. INTERNAL — do not instantiate."""
+    """Shared base for every operation model. INTERNAL. Do not instantiate."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -163,7 +163,7 @@ class Fingerprint(BaseModel):
 
     Always construct via :func:`build_fingerprint`. The direct constructor
     exists for deserialization (the canonical fingerprint round-trips
-    through Pydantic) and trusts the caller's ``fingerprint_id`` — pass a
+    through Pydantic) and trusts the caller's ``fingerprint_id``: pass a
     wrong value and downstream comparisons silently lie.
     """
 

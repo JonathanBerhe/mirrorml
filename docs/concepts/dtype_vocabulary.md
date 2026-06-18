@@ -17,7 +17,7 @@ matches what is written here.
 
 A fingerprint compares pipelines across frameworks. Without a canonical
 form for dtypes, two tracers will produce strings that disagree
-syntactically even when they agree semantically — pandas's
+syntactically even when they agree semantically, pandas's
 `datetime64[ns, UTC]`, Polars's `Datetime(time_unit='ns', time_zone='UTC')`,
 and SQL's `TIMESTAMP WITH TIME ZONE` mean the same thing but compare
 unequal. Every such mismatch becomes either a spurious divergence (precision
@@ -66,7 +66,7 @@ inference). Allowed only on `int*`, `uint*`, `float*`, and `decimal`
 bases; attaching it to `bool` / `utf8` / temporals raises at construction.
 
 Whitespace and case are **significant**. The canonical form is exactly
-what the grammar emits — no leading/trailing whitespace, no alternate
+what the grammar emits: no leading/trailing whitespace, no alternate
 casings (`INT64` is not a synonym for `int64`), one space after `,` in
 `timestamp[unit, tz]` and `decimal[p, s]`.
 
@@ -98,7 +98,7 @@ casings (`INT64` is not a synonym for `int64`), one space after `,` in
 
 | Canonical | Notes |
 |---|---|
-| `utf8` | UTF-8 encoded string. Use this for any text column — there is no `string` / `varchar` synonym. |
+| `utf8` | UTF-8 encoded string. Use this for any text column. There is no `string` / `varchar` synonym. |
 | `binary` | Raw bytes. |
 
 ### Temporal
@@ -114,7 +114,7 @@ casings (`INT64` is not a synonym for `int64`), one space after `,` in
 `unit` is one of `s`, `ms`, `us`, `ns`. Timezones are IANA names; the
 parser also accepts fixed offset strings like `+05:30` and the `Etc/GMT*`
 forms. The parser does *not* verify that the timezone resolves against a
-live IANA database — that responsibility lies with the tracer.
+live IANA database. That responsibility lies with the tracer.
 
 ### Decimal
 
@@ -137,14 +137,14 @@ valid. There is no fixed-length list yet; if needed we will add
 
 ### Reserved for future minor versions
 
-- `struct[<field>: <dtype>, ...]` — heterogeneous record type.
-- `map[<key dtype>, <value dtype>]` — key-value pairs.
+- `struct[<field>: <dtype>, ...]`: heterogeneous record type.
+- `map[<key dtype>, <value dtype>]`: key-value pairs.
 - `dictionary[<index dtype>, <value dtype>]` (Arrow dictionary-encoded
   type). Useful for categoricals; future categorical-encoding support may
   promote this.
 - `fixed_size_binary[<n>]`.
 
-Adding any of these is **additive** — minor-version bump on `SCHEMA_VERSION`
+Adding any of these is **additive**: a minor-version bump on `SCHEMA_VERSION`
 plus an entry here and an `_SCALARS` / parser branch in `dtypes.py`. No
 existing fingerprint is invalidated.
 
@@ -166,7 +166,7 @@ high-level intent is sketched below for reference.
 | `datetime64[ns]` | `timestamp[ns]` |
 | `datetime64[ns, UTC]` | `timestamp[ns, UTC]` |
 | `timedelta64[ns]` | `duration[ns]` |
-| `category` | (TBD — see "Reserved for future minor versions") |
+| `category` | (TBD, see "Reserved for future minor versions") |
 
 ### Polars → canonical
 
@@ -224,7 +224,7 @@ contract those rules satisfy.
 
 ## Limits
 
-- No struct, map, dictionary, or fixed-size types in v1.0.0 — see
+- No struct, map, dictionary, or fixed-size types in v1.0.0, see
   "Reserved for future minor versions" above. Tracers that encounter
   these must raise `UnsupportedOperationError` until the schema catches
   up.

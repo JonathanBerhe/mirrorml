@@ -28,7 +28,7 @@ def _build(*, source_id: str, filter_id: str, project_id: str) -> Fingerprint:
 
 def test_relabeling_op_ids_does_not_change_fingerprint() -> None:
     """The structural-hash rewrite during canonicalization erases tracer-
-    assigned op_ids — equivalent pipelines hash identically regardless of
+    assigned op_ids: equivalent pipelines hash identically regardless of
     label choices."""
 
     fp_a = _build(source_id="a", filter_id="b", project_id="c")

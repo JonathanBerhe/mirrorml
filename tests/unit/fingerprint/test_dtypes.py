@@ -1,4 +1,4 @@
-"""The canonical dtype vocabulary is a public contract — the grammar and
+"""The canonical dtype vocabulary is a public contract: the grammar and
 the schema-level validation hook are pinned by these tests."""
 
 from __future__ import annotations

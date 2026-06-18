@@ -1,7 +1,7 @@
 # Divergence Taxonomy
 
 This document is the definitive specification of MirrorML's divergence
-categories. The set is **closed** and **flat** — fifteen labels, no
+categories. The set is **closed** and **flat**, fifteen labels, no
 hierarchy. Adding a category requires (per `CLAUDE.md`) a definition in this
 file, a classifier rule in `src/mirrorml/diff/classify.py`, and at least
 five MirrorBench examples. Renaming or removing a category is a breaking
@@ -53,7 +53,7 @@ zero, propagated, dropped, or filled with a sentinel.
 
 ### `categorical_encoding`
 
-Two pipelines produce different encodings for the same categorical input —
+Two pipelines produce different encodings for the same categorical input,
 different category orders, different label-to-index maps, different
 handling of unseen categories, or a different encoding scheme entirely
 (one-hot vs. label vs. target).
@@ -65,7 +65,7 @@ handling of unseen categories, or a different encoding scheme entirely
 
 ### `join_key_mismatch`
 
-Two pipelines join the same logical tables but disagree on the join keys —
+Two pipelines join the same logical tables but disagree on the join keys,
 different columns, different cast strategy, different handling of
 case-sensitivity in string keys.
 
@@ -83,7 +83,7 @@ performance.
 
 > *Example.* Offline runs `merge_asof(direction="backward")` to attach the
 > last-known feature value; online runs `direction="forward"`, attaching a
-> feature value computed *after* the prediction time — a leakage bug in
+> feature value computed *after* the prediction time, a leakage bug in
 > training that disappears at serving, producing an apparently correct
 > model that degrades the moment it ships.
 
@@ -132,7 +132,7 @@ outputs for the same input.
 
 ### `schema_drift`
 
-Two pipelines produce different output schemas — extra columns, missing
+Two pipelines produce different output schemas: extra columns, missing
 columns, reordered columns. The most common cause is one side adding a
 feature that the other has not yet shipped.
 
@@ -167,7 +167,7 @@ joins, target encoding that pools the target column itself.
 
 ### `unit_mismatch`
 
-Two pipelines produce the same column with different units of measure —
+Two pipelines produce the same column with different units of measure,
 seconds vs. milliseconds, dollars vs. cents, meters vs. miles.
 
 > *Example.* Offline emits `elapsed_time` in seconds; online emits it in
@@ -177,5 +177,5 @@ seconds vs. milliseconds, dollars vs. cents, meters vs. miles.
 ## Ordering
 
 The order above is the order of `DIVERGENCE_CATEGORIES` and the
-`DivergenceCategory` `Literal`. Do not rearrange — downstream sort-stability
+`DivergenceCategory` `Literal`. Do not rearrange: downstream sort-stability
 relies on it.

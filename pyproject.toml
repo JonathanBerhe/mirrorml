@@ -80,8 +80,8 @@ select = [
     "RUF", # ruff-specific
 ]
 ignore = [
-    "E501", # line length — the formatter handles code; long doctest lines are fine
-    "B008", # function call in argument defaults — typer/Pydantic patterns use this
+    "E501", # line length: the formatter handles code; long doctest lines are fine
+    "B008", # function call in argument defaults: typer/Pydantic patterns use this
 ]
 
 [tool.ruff.lint.per-file-ignores]

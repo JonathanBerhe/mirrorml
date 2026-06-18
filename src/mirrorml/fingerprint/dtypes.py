@@ -2,10 +2,10 @@
 
 The dtype vocabulary is Arrow-flavored: it borrows Apache Arrow's logical
 type system because Arrow is the lingua franca every tracer can map into
-cheaply — Polars is Arrow-native, pandas 2.x ships Arrow extension dtypes,
+cheaply: Polars is Arrow-native, pandas 2.x ships Arrow extension dtypes,
 and most modern SQL engines expose Arrow IPC for column metadata.
 
-The canonical form is a string in a closed grammar — see
+The canonical form is a string in a closed grammar, see
 ``docs/concepts/dtype_vocabulary.md`` for the definitive spec. Every dtype
 that appears in a :class:`~mirrorml.fingerprint.schema.Fingerprint` is one
 of these strings; the M2 tracers normalize their framework-native types
@@ -84,8 +84,8 @@ class ParsedDtype:
 
     Returned by :func:`parse_dtype`; intended for introspection (the diff
     classifier needs to compare units / timezones / element types to label
-    a divergence). For storage and equality use the canonical string itself
-    — it is byte-stable and JSON-native.
+    a divergence). For storage and equality use the canonical string itself,
+    it is byte-stable and JSON-native.
     """
 
     kind: str

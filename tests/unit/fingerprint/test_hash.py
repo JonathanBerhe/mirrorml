@@ -1,4 +1,4 @@
-"""The fingerprint_id hash function — locked behavior."""
+"""The fingerprint_id hash function: locked behavior."""
 
 from __future__ import annotations
 

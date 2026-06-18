@@ -70,7 +70,7 @@ def test_op_id_relabeling_preserves_fingerprint_id(
 @settings(max_examples=25, deadline=None)
 def test_independent_filter_ordering_preserves_fingerprint_id(seed: int) -> None:
     """Two filters with the same dependency and different predicates are
-    independent — emitting them in either order must yield the same
+    independent, emitting them in either order must yield the same
     fingerprint_id."""
 
     import random

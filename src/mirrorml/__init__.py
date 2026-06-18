@@ -1,13 +1,13 @@
-"""MirrorML — static detection of training-serving skew in ML feature pipelines.
+"""MirrorML: static detection of training-serving skew in ML feature pipelines.
 
 The seven names below are the entire stable public surface as of v0.1.0.
 Anything not in :data:`__all__` is internal and may change without notice.
 
-- :class:`Fingerprint` — canonical representation of a pipeline.
-- :func:`fingerprint` — construct a :class:`Fingerprint`.
-- :class:`Divergence` — a classified disagreement between two fingerprints.
-- :func:`diff` — compute divergences between two fingerprints.
-- :func:`trace_pandas`, :func:`trace_polars`, :func:`trace_sql` — per-
+- :class:`Fingerprint`: canonical representation of a pipeline.
+- :func:`fingerprint`: construct a :class:`Fingerprint`.
+- :class:`Divergence`: a classified disagreement between two fingerprints.
+- :func:`diff`: compute divergences between two fingerprints.
+- :func:`trace_pandas`, :func:`trace_polars`, :func:`trace_sql`: per-
   framework tracers.
 
 All seven names are implemented: the tracers lower pandas, Polars, and SQL

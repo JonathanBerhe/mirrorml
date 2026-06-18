@@ -37,7 +37,7 @@ def canonical_json(data: object) -> bytes:
     Rules:
 
     - Keys sorted at every level.
-    - Separators ``(",", ":")`` — no whitespace.
+    - Separators ``(",", ":")``, with no whitespace.
     - ``None``-valued dict entries omitted (a missing key and an explicit
       ``None`` are equivalent in the schema).
     - ``ensure_ascii=False`` for byte-stable UTF-8.
@@ -79,7 +79,7 @@ def canonicalize_operations(ops: tuple[Operation, ...]) -> tuple[Operation, ...]
     1. Validate: no duplicate ``op_id``, no missing dependencies, no cycles.
     2. Compute structural hashes for each op in topological order. The hash
        captures the op's content and the structural hashes of its
-       dependencies (in order — dependency order is significant for binary
+       dependencies (in order, dependency order is significant for binary
        ops like joins). Excludes ``op_id`` itself so tracer-assigned ids do
        not leak into the hash.
     3. Rewrite each op: ``op_id`` and ``dependencies`` become structural

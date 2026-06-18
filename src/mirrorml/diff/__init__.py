@@ -1,4 +1,4 @@
-"""Diff engine — compare two fingerprints; classify and localize divergences.
+"""Diff engine: compare two fingerprints; classify and localize divergences.
 
 :func:`diff` aligns two fingerprints, classifies each disagreement into the
 taxonomy, and localizes it to the responsible operation; :class:`Divergence`

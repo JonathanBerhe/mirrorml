@@ -1,4 +1,4 @@
-"""Fingerprint identifier — SHA-256 over canonical bytes.
+"""Fingerprint identifier: SHA-256 over canonical bytes.
 
 This module is intentionally tiny. Keeping it isolated from the rest of the
 fingerprint package makes the algorithm easy to audit and gives downstream

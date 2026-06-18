@@ -1,4 +1,4 @@
-"""MirrorML fingerprint — the canonical representation of a feature pipeline.
+"""MirrorML fingerprint: the canonical representation of a feature pipeline.
 
 The public surface from this package is :class:`Fingerprint`,
 :class:`Operation`, and :func:`build_fingerprint`. Everything else is an

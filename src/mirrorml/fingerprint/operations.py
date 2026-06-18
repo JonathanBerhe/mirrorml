@@ -1,4 +1,4 @@
-"""Concrete operation models — one per family.
+"""Concrete operation models: one per family.
 
 Operations are grouped by family (e.g. :class:`Aggregate` covers
 ``groupby.mean``, ``groupby.sum``, ``groupby.agg``) rather than one-per-
@@ -90,7 +90,7 @@ class AsOfJoin(_OpBase):
 
     The left side dependency precedes the right in
     :attr:`_OpBase.dependencies`. The ``temporal`` field is required and
-    must set ``direction`` — the most common source of silent skew in
+    must set ``direction``: the most common source of silent skew in
     feature pipelines.
     """
 
@@ -106,7 +106,7 @@ class AsOfJoin(_OpBase):
 class Window(_OpBase):
     """Time-windowed or row-windowed aggregation.
 
-    ``size`` is a string like ``"5min"``, ``"3d"``, or ``"10rows"`` —
+    ``size`` is a string like ``"5min"``, ``"3d"``, or ``"10rows"``,
     parsed by the diff classifier when comparing window sizes across
     framework conventions.
     """
@@ -151,7 +151,7 @@ class Encode(_OpBase):
     """Categorical encoding.
 
     Capturing ``categories`` is what lets diff classify
-    ``categorical_encoding`` divergences — if the offline pipeline encodes
+    ``categorical_encoding`` divergences, if the offline pipeline encodes
     against ``{a, b, c}`` and the online pipeline against ``{a, b}``, the
     fingerprints differ at this op.
     """

@@ -1,4 +1,4 @@
-"""CLI smoke test — the entry point exists and ``--version`` prints the
+"""CLI smoke test: the entry point exists and ``--version`` prints the
 package version."""
 
 from __future__ import annotations
