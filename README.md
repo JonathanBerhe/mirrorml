@@ -32,7 +32,7 @@ else) runs later and is outside what MirrorML looks at.
 
 ## Status
 
-Early development (`v0.0.1`). The core works end to end. MirrorML can read
+Early development (`v0.1.0`). The core works end to end. MirrorML can read
 pipelines written in pandas, Polars, or SQL (three common ways to work with
 tables of data in Python and databases), summarize each one, compare them, and
 point to the step that differs. The same pipeline written in any of the three
@@ -147,7 +147,7 @@ The seven names exported from `mirrorml` are the entire stable surface:
 | `diff(...)` | function | Implemented |
 | `trace_pandas(...)` | function | Implemented |
 | `trace_sql(...)` | function | Implemented |
-| `trace_polars(...)` | function | Implemented (experimental) |
+| `trace_polars(...)` | function | Implemented |
 
 Anything not listed is internal and may change without notice.
 
