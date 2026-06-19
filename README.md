@@ -50,14 +50,6 @@ to come, so there are not yet accuracy numbers from real-world use.
 
 ## Install
 
-MirrorML is not yet published to PyPI. From a clone:
-
-```bash
-uv sync --all-extras --dev
-```
-
-Once published:
-
 ```bash
 uv add mirrorml              # core
 uv add 'mirrorml[pandas]'    # pandas tracer
@@ -66,6 +58,12 @@ uv add 'mirrorml[polars]'    # Polars tracer
 
 The core install does not require pandas or Polars. Each one is loaded only when
 you actually use its tracer, so `import mirrorml` stays fast.
+
+For local development, work from a clone instead:
+
+```bash
+uv sync --all-extras --dev
+```
 
 ## Quickstart
 

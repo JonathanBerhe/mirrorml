@@ -12,10 +12,10 @@ The fingerprint schema is versioned independently of the package (see
 
 ## [0.1.0]
 
-First tagged version: the public API and fingerprint schema are usable and
-covered by tests, but the library is still in early development (0.x), so the
-public surface may still change before 1.0.0. Install from source; not yet
-published to PyPI.
+First tagged version, and the first published to PyPI (`uv add mirrorml`). The
+public API and fingerprint schema are usable and covered by tests, but the
+library is still in early development (0.x), so the public surface may still
+change before 1.0.0.
 
 ### Added
 
