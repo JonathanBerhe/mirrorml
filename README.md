@@ -56,8 +56,9 @@ uv add 'mirrorml[pandas]'    # pandas tracer
 uv add 'mirrorml[polars]'    # Polars tracer
 ```
 
-The core install does not require pandas or Polars. Each one is loaded only when
-you actually use its tracer, so `import mirrorml` stays fast.
+The core install does not require pandas or Polars. Each one loads only when you
+use its *tracer* (the part of MirrorML that reads that framework's code), so
+`import mirrorml` stays fast.
 
 For local development, work from a clone instead:
 
@@ -100,6 +101,13 @@ for d in diff(pandas_fp, sql_skewed):
 # aggregation_function | aggregation 'score': function 'mean' vs 'sum'
 ```
 
+Two things matter when you adapt this to your own pipeline. First, `source_name`
+must match the table the SQL reads from (`events` here): MirrorML treats the
+source's name as part of the pipeline's identity, so a mismatch is itself
+reported as a difference. Second, the dtype strings in `input_schema` (`int64`,
+`float64`, and others such as timestamps and decimals) come from MirrorML's
+[dtype vocabulary](docs/concepts/dtype_vocabulary.md).
+
 The Polars tracer takes the same shape; its pipeline receives the frame plus a
 `pl` expression namespace:
 
@@ -113,6 +121,11 @@ def offline(lf, pl):
 
 polars_fp = trace_polars(offline, input_schema=EVENTS, source_name="events")
 ```
+
+For a realistic, end-to-end example, see the [demo](demo/README.md): an offline
+pandas pipeline and an online SQL pipeline that compute the same churn feature,
+checked both ways (by reading the code, and by running both on a small batch of
+data and comparing the results).
 
 ## CLI
 
@@ -130,8 +143,10 @@ mirrorml verify path/to/pair
 ```
 
 A "pair" is a directory containing a `meta.yaml` (which names each side's
-language, source file, and schema) plus the source files themselves. The
-MirrorBench pairs under `bench/pairs/` are runnable examples.
+language, source file, and schema) plus the source files themselves. This is the
+format the MirrorBench pairs under `bench/pairs/` use, so those are the examples
+to copy. To check your own two pipelines, the most direct path is the Python API
+from the Quickstart above: trace each side, then `diff`.
 
 ## Public API
 
