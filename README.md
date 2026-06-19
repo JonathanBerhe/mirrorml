@@ -146,7 +146,8 @@ A "pair" is a directory containing a `meta.yaml` (which names each side's
 language, source file, and schema) plus the source files themselves. This is the
 format the MirrorBench pairs under `bench/pairs/` use, so those are the examples
 to copy. To check your own two pipelines, the most direct path is the Python API
-from the Quickstart above: trace each side, then `diff`.
+from the Quickstart above: trace each side, then `diff`. To run that check in
+CI, see the [GitHub Action](examples/github-action/README.md).
 
 ## Public API
 

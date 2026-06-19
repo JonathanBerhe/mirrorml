@@ -1,0 +1,60 @@
+name: "MirrorML"
+description: "Static detection of training-serving skew between two feature pipelines."
+author: "MirrorML contributors"
+branding:
+  icon: "git-pull-request"
+  color: "purple"
+
+inputs:
+  command:
+    description: "Command that runs your MirrorML check. The default runs mirrorml_check.py (which traces your offline and online pipelines and exits non-zero if they diverge). You can also point it at the CLI, e.g. 'mirrorml verify path/to/pairs'."
+    required: false
+    default: "python mirrorml_check.py"
+  python-version:
+    description: "Python version to set up."
+    required: false
+    default: "3.12"
+  extras:
+    description: "Comma-separated MirrorML extras to install (pandas, polars). Leave empty for SQL-only checks."
+    required: false
+    default: "pandas,polars"
+  version:
+    description: "PyPI version of mirrorml to install (e.g. '0.1.0'). Empty installs the latest release. Pin for reproducible CI."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install MirrorML
+      shell: bash
+      env:
+        MIRRORML_EXTRAS: ${{ inputs.extras }}
+        MIRRORML_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        spec="mirrorml"
+        if [ -n "${MIRRORML_EXTRAS}" ]; then
+          spec="mirrorml[${MIRRORML_EXTRAS}]"
+        fi
+        if [ -n "${MIRRORML_VERSION}" ]; then
+          spec="${spec}==${MIRRORML_VERSION}"
+        fi
+        python -m pip install --upgrade pip
+        python -m pip install "${spec}"
+        mirrorml --version
+
+    - name: Run MirrorML check
+      shell: bash
+      env:
+        # Passed via env (not interpolated into the script body) so the command
+        # string cannot break out of the step.
+        MIRRORML_COMMAND: ${{ inputs.command }}
+      run: |
+        set -euo pipefail
+        bash -c "${MIRRORML_COMMAND}"

@@ -1,0 +1,24 @@
+# Copy this to .github/workflows/mirrorml.yml in YOUR repository.
+#
+# It runs the MirrorML skew check on every pull request that touches feature
+# code, and fails the build if the offline and online pipelines diverge.
+name: MirrorML
+
+on:
+  pull_request:
+    paths:
+      - "**/*.py"
+      - "**/*.sql"
+      - "mirrorml_check.py"
+
+jobs:
+  skew:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # @main tracks the latest action. For reproducible CI, pin to a released
+      # tag or a commit SHA once one includes action.yml.
+      - uses: JonathanBerhe/mirrorml@main
+        with:
+          extras: "pandas,polars"
+          # version: "0.1.0"   # uncomment to pin the installed mirrorml package
