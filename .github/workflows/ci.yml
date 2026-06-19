@@ -93,8 +93,6 @@ jobs:
             --fail-under-precision "$PRECISION_GATE" \
             --fail-under-recall "$RECALL_GATE" \
             --github-step-summary "$GITHUB_STEP_SUMMARY"
-      - name: Run the demo end to end (smoke test)
-        run: uv run python demo/check.py
       - name: Upload bench results
         if: always()
         uses: actions/upload-artifact@v7

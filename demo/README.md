@@ -20,9 +20,12 @@ checks that they do, and flags it when they drift apart.
 
 ## What the demo shows
 
-`check.py` traces both pipelines and runs four checks:
+`check.py` runs two layers, both self-asserting.
 
-1. **Correct pair** -> MirrorML reports them as equivalent (no skew).
+**Static (trace and diff, no data needed).** MirrorML traces both pipelines
+and compares their fingerprints:
+
+1. **Correct pair** -> reported as equivalent (no skew).
 2. **Serving sums instead of averaging** -> caught as `aggregation_function`.
 3. **Serving forgot the `amount > 0` validity filter** -> caught as a
    missing-operation skew (`schema_drift`), pointed at the filter the training
@@ -31,8 +34,22 @@ checks that they do, and flags it when they drift apart.
    `timezone_mismatch`, even though the feature does not aggregate on `ts`.
 
 Each of those is a mistake that ships silently in real systems: nothing
-crashes, the model just quietly gets worse. MirrorML catches all three before
+crashes, the model just quietly gets worse. MirrorML catches all four before
 either pipeline runs.
+
+**Statistical (run both pipelines on a fixture, compare the output values).**
+As a second, independent check, the demo actually executes both pipelines on a
+small in-memory table. pandas runs the offline side; the online SQL runs
+through sqlglot's built-in executor, so no database is needed. The SUM bug and
+the dropped-filter bug produce different numbers, so the value comparison
+catches them too.
+
+The timezone case is the instructive one: the static check flags it, but the
+statistical check reports the values as equal, because the feature never reads
+the `ts` column, so its timezone cannot change the result on this fixture.
+That is the point of the hybrid design: the static and statistical checks are
+complementary, and the static fingerprint catches a class of skew that a value
+comparison on a finite fixture cannot.
 
 ## Run it
 
