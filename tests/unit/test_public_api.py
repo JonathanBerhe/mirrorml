@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib.metadata import version
+
 import mirrorml
 
 
@@ -25,7 +27,17 @@ def test_every_public_name_is_importable() -> None:
 
 
 def test_version_is_set() -> None:
-    assert mirrorml.__version__ == "0.1.1"
+    """``__version__`` is derived from installed package metadata, not a
+    hardcoded literal, so it cannot drift from what the wheel/PyPI report.
+
+    This also asserts the metadata lookup actually resolves (i.e. the
+    package is installed), rather than falling back to the source-checkout
+    sentinel.
+    """
+
+    assert isinstance(mirrorml.__version__, str)
+    assert mirrorml.__version__
+    assert mirrorml.__version__ == version("mirrorml")
 
 
 def test_pandas_and_polars_are_not_imported_eagerly() -> None:

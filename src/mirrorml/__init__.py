@@ -22,6 +22,8 @@ internal access.
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
+
 from mirrorml.diff import Divergence, diff
 from mirrorml.fingerprint import Fingerprint
 from mirrorml.fingerprint import build_fingerprint as fingerprint
@@ -36,4 +38,12 @@ __all__ = [
     "trace_polars",
     "trace_sql",
 ]
-__version__ = "0.1.1"
+# Sourced from installed package metadata so that pyproject.toml is the
+# single source of truth for the version: the built wheel's __version__ is
+# whatever hatchling wrote into its metadata from pyproject.toml, which is
+# also what PyPI reports. The fallback covers running from a source
+# checkout that was never installed.
+try:
+    __version__ = version("mirrorml")
+except PackageNotFoundError:
+    __version__ = "0.0.0+unknown"
