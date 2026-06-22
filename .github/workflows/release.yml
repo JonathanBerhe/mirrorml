@@ -1,23 +1,26 @@
 name: Release
 
-# Tag-triggered release: pushing an annotated tag like ``v0.1.0`` builds
-# the sdist + wheel via hatchling, runs the full CI verification chain
-# (lint / typecheck / test / bench) one last time on the tagged commit,
-# and uploads to PyPI via trusted publishing (OIDC, no API token in CI
-# secrets). The job is intentionally manual-trigger-friendly via
-# ``workflow_dispatch`` so a maintainer can replay a release without
-# re-tagging.
+# release-please owns versioning end to end. It watches Conventional
+# Commits on ``main`` and keeps a single open "release PR" that bumps the
+# version (in pyproject.toml, via the ``x-release-please-version`` marker)
+# and regenerates CHANGELOG.md. Merging that PR makes release-please cut
+# the GitHub release and the ``vX.Y.Z`` tag, and flips
+# ``release_created=true``.
+#
+# Publishing lives in this same workflow, gated on that output. That is
+# deliberate: a tag pushed by the default GITHUB_TOKEN does not trigger a
+# separate ``on: push: tags`` workflow, so consolidating here avoids
+# needing a PAT to bridge the tag event while keeping PyPI trusted
+# publishing (OIDC, no API token in CI secrets).
+#
+# On a normal push to main only the lightweight ``release-please`` job
+# runs (it just maintains the PR). The verify / build / publish jobs run
+# only when a release PR merge produces a release.
 
 on:
   push:
-    tags:
-      - "v*.*.*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing tag to build and publish (e.g. v0.1.0)"
-        required: true
-        type: string
+    branches: [main]
+  workflow_dispatch: {}
 
 concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
@@ -27,13 +30,31 @@ permissions:
   contents: read
 
 jobs:
+  release-please:
+    name: Release PR / tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release + tag
+      pull-requests: write # open and maintain the release PR
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   verify:
     name: Verify (lint / typecheck / test / bench)
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.release-please.outputs.tag_name }}
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -59,12 +80,13 @@ jobs:
 
   build:
     name: Build sdist + wheel
-    needs: verify
+    needs: [release-please, verify]
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.release-please.outputs.tag_name }}
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -76,7 +98,7 @@ jobs:
       - name: Inspect artifacts
         run: |
           ls -lh dist/
-          uv run python -c "import tarfile, zipfile, pathlib
+          uv run python -c "import pathlib
           for p in sorted(pathlib.Path('dist').iterdir()):
               print(p.name, p.stat().st_size, 'bytes')"
       - uses: actions/upload-artifact@v7
@@ -86,14 +108,14 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: build
+    needs: [release-please, build]
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
-    # Trusted publishing requires the workflow to declare ``id-token: write``
-    # AND the PyPI project to be configured to trust this exact workflow.
-    # Until that one-time PyPI configuration is done, this job will fail at
-    # the upload step with a clear "trusted publisher not configured"
-    # message; configure once at https://pypi.org/manage/account/publishing/
-    # and subsequent tag pushes publish automatically.
+    # Trusted publishing requires this workflow to declare ``id-token: write``
+    # AND the PyPI project to be configured to trust this exact workflow
+    # (filename ``release.yml``). Configure once at
+    # https://pypi.org/manage/account/publishing/ and subsequent releases
+    # publish automatically.
     permissions:
       id-token: write
     environment:
