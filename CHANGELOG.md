@@ -10,6 +10,24 @@ The fingerprint schema is versioned independently of the package (see
 
 ## [Unreleased]
 
+## [0.1.1]
+
+Patch release. The library code is unchanged from 0.1.0; this release adds CI
+tooling and documentation.
+
+### Added
+
+- A GitHub Action and a check-script template for running MirrorML skew checks
+  in CI (see `examples/github-action/`). Two files in your repository, a check
+  script and a workflow, fail the build when an offline and online pipeline
+  diverge.
+
+### Changed
+
+- Clearer getting-started in the README: a link to the worked `demo/`, the
+  `source_name` rule that cross-framework checks depend on, and a pointer to the
+  dtype vocabulary.
+
 ## [0.1.0]
 
 First tagged version, and the first published to PyPI (`uv add mirrorml`). The

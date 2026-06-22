@@ -32,7 +32,7 @@ else) runs later and is outside what MirrorML looks at.
 
 ## Status
 
-Early development (`v0.1.0`). The core works end to end. MirrorML can read
+Early development (`v0.1.1`). The core works end to end. MirrorML can read
 pipelines written in pandas, Polars, or SQL (three common ways to work with
 tables of data in Python and databases), summarize each one, compare them, and
 point to the step that differs. The same pipeline written in any of the three

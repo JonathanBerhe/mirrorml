@@ -1,6 +1,6 @@
 """MirrorML: static detection of training-serving skew in ML feature pipelines.
 
-The seven names below are the entire stable public surface as of v0.1.0.
+The seven names below are the entire stable public surface as of v0.1.1.
 Anything not in :data:`__all__` is internal and may change without notice.
 
 - :class:`Fingerprint`: canonical representation of a pipeline.
@@ -36,4 +36,4 @@ __all__ = [
     "trace_polars",
     "trace_sql",
 ]
-__version__ = "0.1.0"
+__version__ = "0.1.1"

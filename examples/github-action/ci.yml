@@ -16,9 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # @main tracks the latest action. For reproducible CI, pin to a released
-      # tag or a commit SHA once one includes action.yml.
-      - uses: JonathanBerhe/mirrorml@main
+      # Pinned to a released tag for reproducible CI; @main tracks the latest.
+      - uses: JonathanBerhe/mirrorml@v0.1.1
         with:
           extras: "pandas,polars"
-          # version: "0.1.0"   # uncomment to pin the installed mirrorml package
+          version: "0.1.1"   # pin the installed mirrorml package
